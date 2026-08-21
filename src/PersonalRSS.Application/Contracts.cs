@@ -8,6 +8,7 @@ public interface IFeedRepository
     Task<FeedSource?> GetFeedAsync(Guid id, CancellationToken cancellationToken = default);
     Task<FeedSource?> GetFeedBySlugAsync(string slug, CancellationToken cancellationToken = default);
     Task AddFeedAsync(FeedSource feed, CancellationToken cancellationToken = default);
+    Task AddFeedsAsync(IEnumerable<FeedSource> feeds, CancellationToken cancellationToken = default);
     Task SaveFeedAsync(FeedSource feed, CancellationToken cancellationToken = default);
     Task UpsertArticlesAsync(IEnumerable<Article> articles, CancellationToken cancellationToken = default);
     Task<Article?> GetArticleAsync(Guid id, CancellationToken cancellationToken = default);
@@ -19,4 +20,8 @@ public interface IFeedRepository
 public interface IFeedFetcher { Task<IReadOnlyList<ArticleCandidate>> FetchAsync(FeedSource source, CancellationToken cancellationToken = default); }
 public interface IScoringProvider { string Name { get; } Task<ScoreResult> ScoreAsync(ArticleCandidate article, CancellationToken cancellationToken = default); }
 public interface IFilteredFeedRenderer { string Render(FeedSource source, IReadOnlyList<Article> articles, Uri publicFeedUri); }
+public interface ISubscriptionListParser { Task<IReadOnlyList<SubscriptionCandidate>> ParseAsync(Stream content, CancellationToken cancellationToken = default); }
+public sealed record SubscriptionCandidate(string Name, string Url, string? Folder);
+public sealed record FeedImportIssue(string? Name, string? Url, string Reason);
+public sealed record FeedImportResult(int Added, int Skipped, int Invalid, IReadOnlyList<FeedImportIssue> Issues);
 public sealed record RefreshResult(Guid FeedId, int Fetched, int Stored, string ScoringProvider);
