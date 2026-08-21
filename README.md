@@ -23,7 +23,9 @@ dotnet restore
 dotnet run --project src/PersonalRSS.Web
 ```
 
-Open the address printed by ASP.NET Core, add a source, and refresh it. Add the resulting `/feeds/{slug}.xml` URL to your reader. SQLite data is stored in `data/personalrss.db` relative to the process working directory.
+Open the address printed by ASP.NET Core. Add one source manually or upload an OPML subscription export, then refresh the imported sources. Add the resulting `/feeds/{slug}.xml` URLs to your reader. SQLite data is stored in `data/personalrss.db` relative to the web application's content directory.
+
+OPML imports preserve feed titles, accept nested folder exports, and are safe to repeat. Existing and repeated feed URLs are skipped rather than duplicated. Folder names are parsed for forward compatibility but are not stored in the current schema.
 
 ## Docker
 
@@ -40,6 +42,7 @@ Open <http://localhost:8080>. A named volume persists the database.
 | `GET` | `/` | Management dashboard |
 | `GET` | `/health` | Health check |
 | `GET` / `POST` | `/api/feeds` | List or add sources |
+| `POST` | `/api/feeds/import/opml` | Upload an OPML subscription list |
 | `POST` | `/api/feeds/{id}/refresh` | Fetch and score now |
 | `GET` | `/api/articles?feedId=&minScore=&limit=` | Inspect scored articles |
 | `POST` | `/api/articles/{id}/feedback` | Store `Interested` or `NotInterested` |
@@ -50,13 +53,14 @@ Open <http://localhost:8080>. A named volume persists the database.
 - Single-user/trusted-network design; authentication is not implemented.
 - Refresh is manual. Scheduling follows after ingestion proves reliable.
 - Common RSS 2.0 and Atom are supported; unusual extensions may need dedicated handling.
+- OPML folder names are not displayed yet; all imported feeds appear in one source list.
 - Feedback is recorded but does not retrain the baseline provider yet.
 - `EnsureCreated` simplifies first run. Add EF Core migrations before evolving important databases.
 
 ## Likely next increments
 
 1. Scheduled refresh with per-feed intervals and conditional HTTP requests.
-2. OPML import/export.
+2. OPML export and source-folder organization.
 3. Feedback-aware scoring, then optional local embeddings or BYOK model support.
 4. Authentication and SSRF defenses before exposure beyond a trusted LAN.
 5. Observability, retention rules, and database migrations.

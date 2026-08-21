@@ -37,6 +37,13 @@ public sealed class SqliteFeedRepository(IDbContextFactory<PersonalRssDbContext>
         await db.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task AddFeedsAsync(IEnumerable<FeedSource> feeds, CancellationToken cancellationToken = default)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        db.Feeds.AddRange(feeds);
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task SaveFeedAsync(FeedSource feed, CancellationToken cancellationToken = default)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
