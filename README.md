@@ -1,0 +1,62 @@
+# PersonalRSS
+
+PersonalRSS is a self-hosted filtering layer between public RSS/Atom feeds and an existing reader such as The Old Reader. It fetches source feeds, scores articles, stores results in SQLite, and exposes new filtered RSS URLs.
+
+This repository is intentionally an MVP foundation. The first scoring provider is a transparent keyword baseline; its provider interface and stored feedback make it possible to add embeddings or learned ranking later without coupling that work to ingestion or HTTP delivery.
+
+## Architecture
+
+- `PersonalRSS.Core` — domain models with no infrastructure dependencies.
+- `PersonalRSS.Application` — ports and the feed-refresh use case.
+- `PersonalRSS.Infrastructure` — SQLite/EF Core, RSS/Atom ingestion, baseline scoring, and RSS rendering.
+- `PersonalRSS.Web` — minimal ASP.NET Core dashboard and API.
+- `PersonalRSS.Tests` — focused scoring tests.
+
+Dependency direction: `Web -> Infrastructure -> Application -> Core`.
+
+## Run locally
+
+Requires the .NET 8 SDK.
+
+```powershell
+dotnet restore
+dotnet run --project src/PersonalRSS.Web
+```
+
+Open the address printed by ASP.NET Core, add a source, and refresh it. Add the resulting `/feeds/{slug}.xml` URL to your reader. SQLite data is stored in `data/personalrss.db` relative to the process working directory.
+
+## Docker
+
+```powershell
+docker compose up --build
+```
+
+Open <http://localhost:8080>. A named volume persists the database.
+
+## Initial HTTP surface
+
+| Method | Route | Purpose |
+|---|---|---|
+| `GET` | `/` | Management dashboard |
+| `GET` | `/health` | Health check |
+| `GET` / `POST` | `/api/feeds` | List or add sources |
+| `POST` | `/api/feeds/{id}/refresh` | Fetch and score now |
+| `GET` | `/api/articles?feedId=&minScore=&limit=` | Inspect scored articles |
+| `POST` | `/api/articles/{id}/feedback` | Store `Interested` or `NotInterested` |
+| `GET` | `/feeds/{slug}.xml?minScore=0.5` | Reader-compatible filtered RSS |
+
+## MVP boundaries
+
+- Single-user/trusted-network design; authentication is not implemented.
+- Refresh is manual. Scheduling follows after ingestion proves reliable.
+- Common RSS 2.0 and Atom are supported; unusual extensions may need dedicated handling.
+- Feedback is recorded but does not retrain the baseline provider yet.
+- `EnsureCreated` simplifies first run. Add EF Core migrations before evolving important databases.
+
+## Likely next increments
+
+1. Scheduled refresh with per-feed intervals and conditional HTTP requests.
+2. OPML import/export.
+3. Feedback-aware scoring, then optional local embeddings or BYOK model support.
+4. Authentication and SSRF defenses before exposure beyond a trusted LAN.
+5. Observability, retention rules, and database migrations.

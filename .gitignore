@@ -1,0 +1,11 @@
+bin/
+obj/
+.vs/
+.vscode/
+*.user
+*.suo
+data/
+*.db
+*.db-shm
+*.db-wal
+.env
