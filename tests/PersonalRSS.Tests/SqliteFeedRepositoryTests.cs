@@ -8,6 +8,36 @@ namespace PersonalRSS.Tests;
 public sealed class SqliteFeedRepositoryTests
 {
     [Fact]
+    public async Task Initialize_adds_last_viewed_column_to_an_existing_database()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"personalrss-legacy-test-{Guid.NewGuid():N}.db");
+        try
+        {
+            await using (var connection = new SqliteConnection($"Data Source={databasePath}"))
+            {
+                await connection.OpenAsync();
+                await using var create = connection.CreateCommand();
+                create.CommandText = "CREATE TABLE Feeds (Id TEXT NOT NULL PRIMARY KEY);";
+                await create.ExecuteNonQueryAsync();
+            }
+            var options = new DbContextOptionsBuilder<PersonalRssDbContext>().UseSqlite($"Data Source={databasePath}").Options;
+
+            await new SqliteFeedRepository(new TestContextFactory(options)).InitializeAsync();
+
+            await using var verify = new SqliteConnection($"Data Source={databasePath}");
+            await verify.OpenAsync();
+            await using var check = verify.CreateCommand();
+            check.CommandText = "SELECT COUNT(*) FROM pragma_table_info('Feeds') WHERE name = 'LastViewedAt';";
+            Assert.Equal(1L, await check.ExecuteScalarAsync());
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+        }
+    }
+
+    [Fact]
     public async Task Articles_are_returned_newest_first()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"personalrss-test-{Guid.NewGuid():N}.db");
@@ -29,6 +59,12 @@ public sealed class SqliteFeedRepositoryTests
             Assert.Equal(["newer", "older"], articles.Select(article => article.Title));
             Assert.Equal(2, firstInsertCount);
             Assert.Equal(0, repeatInsertCount);
+
+            var unreadBeforeViewing = await repository.GetUnreadCountsAsync();
+            Assert.Equal(2, unreadBeforeViewing[feed.Id]);
+            Assert.True(await repository.MarkFeedViewedAsync(feed.Id, DateTimeOffset.UtcNow.AddMinutes(1)));
+            var unreadAfterViewing = await repository.GetUnreadCountsAsync();
+            Assert.False(unreadAfterViewing.ContainsKey(feed.Id));
 
             await repository.AddFeedbackAsync(new ArticleFeedback { ArticleId = articles[1].Id, Kind = FeedbackKind.NotInterested });
             var filtered = await repository.GetArticlesAsync(feed.Id, 0.5, 100);

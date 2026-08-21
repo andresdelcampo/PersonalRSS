@@ -10,6 +10,19 @@ public sealed class SqliteFeedRepository(IDbContextFactory<PersonalRssDbContext>
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         await db.Database.EnsureCreatedAsync(cancellationToken);
+        await db.Database.OpenConnectionAsync(cancellationToken);
+        try
+        {
+            await using var check = db.Database.GetDbConnection().CreateCommand();
+            check.CommandText = "SELECT COUNT(*) FROM pragma_table_info('Feeds') WHERE name = 'LastViewedAt';";
+            var exists = Convert.ToInt32(await check.ExecuteScalarAsync(cancellationToken)) > 0;
+            if (!exists)
+                await db.Database.ExecuteSqlRawAsync("ALTER TABLE \"Feeds\" ADD COLUMN \"LastViewedAt\" TEXT NULL;", cancellationToken);
+        }
+        finally
+        {
+            await db.Database.CloseConnectionAsync();
+        }
     }
 
     public async Task<IReadOnlyList<FeedSource>> GetFeedsAsync(CancellationToken cancellationToken = default)
@@ -49,6 +62,37 @@ public sealed class SqliteFeedRepository(IDbContextFactory<PersonalRssDbContext>
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         db.Feeds.Update(feed);
         await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task UpdateFeedRefreshStateAsync(Guid id, DateTimeOffset? refreshedAt, string? error, CancellationToken cancellationToken = default)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var feed = await db.Feeds.SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+        if (feed is null) return;
+        feed.LastRefreshedAt = refreshedAt;
+        feed.LastError = error;
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<bool> MarkFeedViewedAsync(Guid id, DateTimeOffset viewedAt, CancellationToken cancellationToken = default)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var feed = await db.Feeds.SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+        if (feed is null) return false;
+        feed.LastViewedAt = viewedAt;
+        await db.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
+    public async Task<IReadOnlyDictionary<Guid, int>> GetUnreadCountsAsync(CancellationToken cancellationToken = default)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var viewedAt = await db.Feeds.AsNoTracking().ToDictionaryAsync(x => x.Id, x => x.LastViewedAt, cancellationToken);
+        var articles = await db.Articles.AsNoTracking().Select(x => new { x.FeedSourceId, x.IngestedAt }).ToListAsync(cancellationToken);
+        return articles
+            .Where(article => viewedAt.TryGetValue(article.FeedSourceId, out var viewed) && (viewed is null || article.IngestedAt > viewed))
+            .GroupBy(article => article.FeedSourceId)
+            .ToDictionary(group => group.Key, group => group.Count());
     }
 
     public async Task<int> UpsertArticlesAsync(IEnumerable<Article> articles, CancellationToken cancellationToken = default)

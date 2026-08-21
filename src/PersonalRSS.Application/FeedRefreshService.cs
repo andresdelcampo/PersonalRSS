@@ -19,15 +19,12 @@ public sealed class FeedRefreshService(IFeedRepository repository, IFeedFetcher 
                 articles.Add(new Article { Id = StableId(feed.Id, candidate.ExternalId), FeedSourceId = feed.Id, ExternalId = candidate.ExternalId, Title = candidate.Title, Link = candidate.Link, Summary = candidate.Summary, Author = candidate.Author, PublishedAt = candidate.PublishedAt, Score = Math.Clamp(score.Value, 0, 1), ScoreReason = score.Reason });
             }
             var newPosts = await repository.UpsertArticlesAsync(articles, cancellationToken);
-            feed.LastRefreshedAt = DateTimeOffset.UtcNow;
-            feed.LastError = null;
-            await repository.SaveFeedAsync(feed, cancellationToken);
+            await repository.UpdateFeedRefreshStateAsync(feed.Id, DateTimeOffset.UtcNow, null, cancellationToken);
             return new RefreshResult(feed.Id, candidates.Count, articles.Count, newPosts, scoringProvider.Name);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            feed.LastError = exception.Message;
-            await repository.SaveFeedAsync(feed, cancellationToken);
+            await repository.UpdateFeedRefreshStateAsync(feed.Id, feed.LastRefreshedAt, exception.Message, cancellationToken);
             throw;
         }
     }

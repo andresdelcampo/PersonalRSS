@@ -23,7 +23,7 @@ dotnet restore
 dotnet run --project src/PersonalRSS.Web
 ```
 
-Open the address printed by ASP.NET Core. Add one source manually or upload an OPML subscription export from the expandable controls below the source list. Opening the dashboard refreshes every source automatically and reports newly stored posts per feed. Select a feed name for readable article cards, use **Rename** to choose a friendlier display name, and copy the external-reader RSS URL from the preview. SQLite data is stored in `data/personalrss.db` relative to the web application's content directory.
+Open the address printed by ASP.NET Core. Add one source manually or upload an OPML subscription export from the expandable controls below the source list. Opening the dashboard refreshes every source automatically and reports persistent unread counts; refreshing does not clear them. Select a feed name to open its readable article cards and mark that feed viewed, use **Rename** to choose a friendlier display name, and copy the external-reader RSS URL from the preview. SQLite data is stored in `data/personalrss.db` relative to the web application's content directory.
 
 The preview shows feed-provided images, summary text, relevance scores, and scoring reasons. **More like this** and **Less like this** immediately override the selected article's score and store the vote as future training data. Generated RSS items link back to their PersonalRSS preview because external readers cannot host interactive voting controls.
 
@@ -48,6 +48,7 @@ Open <http://localhost:8080>. A named volume persists the database.
 | `PUT` | `/api/feeds/{id}` | Rename a source without changing its stable RSS URL |
 | `POST` | `/api/feeds/import/opml` | Upload an OPML subscription list |
 | `POST` | `/api/feeds/{id}/refresh` | Fetch and score now |
+| `POST` | `/api/feeds/{id}/viewed` | Mark the feed viewed for unread counting |
 | `GET` | `/api/articles?feedId=&minScore=&limit=` | Inspect scored articles |
 | `POST` | `/api/articles/{id}/feedback` | Store `Interested` or `NotInterested` |
 | `GET` | `/feeds/{slug}.xml?minScore=0.5` | Reader-compatible filtered RSS |

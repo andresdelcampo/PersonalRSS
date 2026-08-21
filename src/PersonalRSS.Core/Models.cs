@@ -9,6 +9,7 @@ public sealed class FeedSource
     public bool IsEnabled { get; set; } = true;
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? LastRefreshedAt { get; set; }
+    public DateTimeOffset? LastViewedAt { get; set; }
     public string? LastError { get; set; }
 }
 
