@@ -18,11 +18,11 @@ public sealed class FeedRefreshService(IFeedRepository repository, IFeedFetcher 
                 var score = await scoringProvider.ScoreAsync(candidate, cancellationToken);
                 articles.Add(new Article { Id = StableId(feed.Id, candidate.ExternalId), FeedSourceId = feed.Id, ExternalId = candidate.ExternalId, Title = candidate.Title, Link = candidate.Link, Summary = candidate.Summary, Author = candidate.Author, PublishedAt = candidate.PublishedAt, Score = Math.Clamp(score.Value, 0, 1), ScoreReason = score.Reason });
             }
-            await repository.UpsertArticlesAsync(articles, cancellationToken);
+            var newPosts = await repository.UpsertArticlesAsync(articles, cancellationToken);
             feed.LastRefreshedAt = DateTimeOffset.UtcNow;
             feed.LastError = null;
             await repository.SaveFeedAsync(feed, cancellationToken);
-            return new RefreshResult(feed.Id, candidates.Count, articles.Count, scoringProvider.Name);
+            return new RefreshResult(feed.Id, candidates.Count, articles.Count, newPosts, scoringProvider.Name);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {

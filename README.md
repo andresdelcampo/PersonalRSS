@@ -23,7 +23,7 @@ dotnet restore
 dotnet run --project src/PersonalRSS.Web
 ```
 
-Open the address printed by ASP.NET Core. Add one source manually or upload an OPML subscription export, then refresh the imported sources. Use **Preview** for readable article cards and **RSS** for the URL consumed by an external reader. SQLite data is stored in `data/personalrss.db` relative to the web application's content directory.
+Open the address printed by ASP.NET Core. Add one source manually or upload an OPML subscription export. Opening the dashboard refreshes every source automatically and reports newly stored posts per feed. Use **Preview** for readable article cards, **Rename** to choose a friendlier display name, and **RSS** for the URL consumed by an external reader. SQLite data is stored in `data/personalrss.db` relative to the web application's content directory.
 
 The preview shows feed-provided images, summary text, relevance scores, and scoring reasons. **More like this** and **Less like this** immediately override the selected article's score and store the vote as future training data. Generated RSS items link back to their PersonalRSS preview because external readers cannot host interactive voting controls.
 
@@ -45,6 +45,7 @@ Open <http://localhost:8080>. A named volume persists the database.
 | `GET` | `/preview/{slug}` | Readable article cards and feedback controls |
 | `GET` | `/health` | Health check |
 | `GET` / `POST` | `/api/feeds` | List or add sources |
+| `PUT` | `/api/feeds/{id}` | Rename a source without changing its stable RSS URL |
 | `POST` | `/api/feeds/import/opml` | Upload an OPML subscription list |
 | `POST` | `/api/feeds/{id}/refresh` | Fetch and score now |
 | `GET` | `/api/articles?feedId=&minScore=&limit=` | Inspect scored articles |
@@ -54,7 +55,7 @@ Open <http://localhost:8080>. A named volume persists the database.
 ## MVP boundaries
 
 - Single-user/trusted-network design; authentication is not implemented.
-- Refresh is manual. Scheduling follows after ingestion proves reliable.
+- Refresh runs when the management dashboard loads. Background scheduling follows after ingestion proves reliable.
 - Common RSS 2.0 and Atom are supported; unusual extensions may need dedicated handling.
 - OPML folder names are not displayed yet; all imported feeds appear in one source list.
 - Feedback immediately includes or excludes the selected article, but does not retrain the baseline provider for future articles yet.

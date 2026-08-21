@@ -51,13 +51,18 @@ public sealed class SqliteFeedRepository(IDbContextFactory<PersonalRssDbContext>
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task UpsertArticlesAsync(IEnumerable<Article> articles, CancellationToken cancellationToken = default)
+    public async Task<int> UpsertArticlesAsync(IEnumerable<Article> articles, CancellationToken cancellationToken = default)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var added = 0;
         foreach (var article in articles)
         {
             var existing = await db.Articles.SingleOrDefaultAsync(x => x.Id == article.Id, cancellationToken);
-            if (existing is null) db.Articles.Add(article);
+            if (existing is null)
+            {
+                db.Articles.Add(article);
+                added++;
+            }
             else
             {
                 existing.Title = article.Title; existing.Link = article.Link; existing.Summary = article.Summary;
@@ -66,6 +71,7 @@ public sealed class SqliteFeedRepository(IDbContextFactory<PersonalRssDbContext>
             }
         }
         await db.SaveChangesAsync(cancellationToken);
+        return added;
     }
 
     public async Task<Article?> GetArticleAsync(Guid id, CancellationToken cancellationToken = default)

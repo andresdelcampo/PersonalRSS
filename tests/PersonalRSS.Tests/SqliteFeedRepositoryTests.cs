@@ -18,14 +18,17 @@ public sealed class SqliteFeedRepositoryTests
             await repository.InitializeAsync();
             var feed = new FeedSource { Name = "Test", Slug = "test", Url = "https://example.test/rss" };
             await repository.AddFeedAsync(feed);
-            await repository.UpsertArticlesAsync([
+            var firstInsertCount = await repository.UpsertArticlesAsync([
                 Article(feed.Id, "older", new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero)),
                 Article(feed.Id, "newer", new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero))
             ]);
+            var repeatInsertCount = await repository.UpsertArticlesAsync(await repository.GetArticlesAsync(feed.Id, 0, 100));
 
             var articles = await repository.GetArticlesAsync(feed.Id, 0, 100);
 
             Assert.Equal(["newer", "older"], articles.Select(article => article.Title));
+            Assert.Equal(2, firstInsertCount);
+            Assert.Equal(0, repeatInsertCount);
 
             await repository.AddFeedbackAsync(new ArticleFeedback { ArticleId = articles[1].Id, Kind = FeedbackKind.NotInterested });
             var filtered = await repository.GetArticlesAsync(feed.Id, 0.5, 100);
