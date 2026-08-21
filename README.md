@@ -23,7 +23,7 @@ dotnet restore
 dotnet run --project src/PersonalRSS.Web
 ```
 
-Open the address printed by ASP.NET Core. Add one source manually or upload an OPML subscription export. Opening the dashboard refreshes every source automatically and reports newly stored posts per feed. Use **Preview** for readable article cards, **Rename** to choose a friendlier display name, and **RSS** for the URL consumed by an external reader. SQLite data is stored in `data/personalrss.db` relative to the web application's content directory.
+Open the address printed by ASP.NET Core. Add one source manually or upload an OPML subscription export from the expandable controls below the source list. Opening the dashboard refreshes every source automatically and reports newly stored posts per feed. Select a feed name for readable article cards, use **Rename** to choose a friendlier display name, and copy the external-reader RSS URL from the preview. SQLite data is stored in `data/personalrss.db` relative to the web application's content directory.
 
 The preview shows feed-provided images, summary text, relevance scores, and scoring reasons. **More like this** and **Less like this** immediately override the selected article's score and store the vote as future training data. Generated RSS items link back to their PersonalRSS preview because external readers cannot host interactive voting controls.
 
