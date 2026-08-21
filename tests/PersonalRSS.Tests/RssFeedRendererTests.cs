@@ -22,5 +22,6 @@ public sealed class RssFeedRendererTests
         Assert.Equal("rss", document.Root?.Name.LocalName);
         Assert.Equal("2.0", document.Root?.Attribute("version")?.Value);
         Assert.Equal("First article", document.Descendants("item").Single().Element("title")?.Value);
+        Assert.Contains($"/preview/example#article-{article.Id:N}", document.Descendants("item").Single().Element("description")?.Value);
     }
 }

@@ -23,7 +23,9 @@ dotnet restore
 dotnet run --project src/PersonalRSS.Web
 ```
 
-Open the address printed by ASP.NET Core. Add one source manually or upload an OPML subscription export, then refresh the imported sources. Add the resulting `/feeds/{slug}.xml` URLs to your reader. SQLite data is stored in `data/personalrss.db` relative to the web application's content directory.
+Open the address printed by ASP.NET Core. Add one source manually or upload an OPML subscription export, then refresh the imported sources. Use **Preview** for readable article cards and **RSS** for the URL consumed by an external reader. SQLite data is stored in `data/personalrss.db` relative to the web application's content directory.
+
+The preview shows feed-provided images, summary text, relevance scores, and scoring reasons. **More like this** and **Less like this** immediately override the selected article's score and store the vote as future training data. Generated RSS items link back to their PersonalRSS preview because external readers cannot host interactive voting controls.
 
 OPML imports preserve feed titles, accept nested folder exports, and are safe to repeat. Existing and repeated feed URLs are skipped rather than duplicated. Folder names are parsed for forward compatibility but are not stored in the current schema.
 
@@ -40,6 +42,7 @@ Open <http://localhost:8080>. A named volume persists the database.
 | Method | Route | Purpose |
 |---|---|---|
 | `GET` | `/` | Management dashboard |
+| `GET` | `/preview/{slug}` | Readable article cards and feedback controls |
 | `GET` | `/health` | Health check |
 | `GET` / `POST` | `/api/feeds` | List or add sources |
 | `POST` | `/api/feeds/import/opml` | Upload an OPML subscription list |
@@ -54,7 +57,7 @@ Open <http://localhost:8080>. A named volume persists the database.
 - Refresh is manual. Scheduling follows after ingestion proves reliable.
 - Common RSS 2.0 and Atom are supported; unusual extensions may need dedicated handling.
 - OPML folder names are not displayed yet; all imported feeds appear in one source list.
-- Feedback is recorded but does not retrain the baseline provider yet.
+- Feedback immediately includes or excludes the selected article, but does not retrain the baseline provider for future articles yet.
 - `EnsureCreated` simplifies first run. Add EF Core migrations before evolving important databases.
 
 ## Likely next increments

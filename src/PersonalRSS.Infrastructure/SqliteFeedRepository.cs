@@ -86,6 +86,12 @@ public sealed class SqliteFeedRepository(IDbContextFactory<PersonalRssDbContext>
     public async Task AddFeedbackAsync(ArticleFeedback feedback, CancellationToken cancellationToken = default)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var article = await db.Articles.SingleOrDefaultAsync(x => x.Id == feedback.ArticleId, cancellationToken)
+            ?? throw new KeyNotFoundException($"Article {feedback.ArticleId} was not found.");
+        article.Score = feedback.Kind == FeedbackKind.Interested ? 1 : 0;
+        article.ScoreReason = feedback.Kind == FeedbackKind.Interested
+            ? "You marked this article as interesting."
+            : "You marked this article as not interesting.";
         db.Feedback.Add(feedback);
         await db.SaveChangesAsync(cancellationToken);
     }

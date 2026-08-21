@@ -26,6 +26,14 @@ public sealed class SqliteFeedRepositoryTests
             var articles = await repository.GetArticlesAsync(feed.Id, 0, 100);
 
             Assert.Equal(["newer", "older"], articles.Select(article => article.Title));
+
+            await repository.AddFeedbackAsync(new ArticleFeedback { ArticleId = articles[1].Id, Kind = FeedbackKind.NotInterested });
+            var filtered = await repository.GetArticlesAsync(feed.Id, 0.5, 100);
+            var overridden = await repository.GetArticleAsync(articles[1].Id);
+
+            Assert.DoesNotContain(filtered, article => article.Id == articles[1].Id);
+            Assert.Equal(0, overridden?.Score);
+            Assert.Contains("not interesting", overridden?.ScoreReason);
         }
         finally
         {
