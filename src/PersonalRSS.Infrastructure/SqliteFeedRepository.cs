@@ -79,7 +79,8 @@ public sealed class SqliteFeedRepository(IDbContextFactory<PersonalRssDbContext>
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var query = db.Articles.AsNoTracking().Where(x => x.Score >= minimumScore);
         if (feedId.HasValue) query = query.Where(x => x.FeedSourceId == feedId.Value);
-        return await query.OrderByDescending(x => x.PublishedAt).Take(Math.Clamp(limit, 1, 500)).ToListAsync(cancellationToken);
+        var articles = await query.ToListAsync(cancellationToken);
+        return articles.OrderByDescending(x => x.PublishedAt).Take(Math.Clamp(limit, 1, 500)).ToList();
     }
 
     public async Task AddFeedbackAsync(ArticleFeedback feedback, CancellationToken cancellationToken = default)
