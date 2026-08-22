@@ -86,6 +86,35 @@ public sealed class SqliteFeedRepositoryTests
     }
 
     [Fact]
+    public async Task Unread_counts_can_match_the_default_preview_score()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"personalrss-filtered-unread-test-{Guid.NewGuid():N}.db");
+        try
+        {
+            var options = new DbContextOptionsBuilder<PersonalRssDbContext>().UseSqlite($"Data Source={databasePath}").Options;
+            var repository = new SqliteFeedRepository(new TestContextFactory(options));
+            await repository.InitializeAsync();
+            var feed = new FeedSource { Name = "Test", Slug = "test", Url = "https://example.test/rss" };
+            await repository.AddFeedAsync(feed);
+            await repository.UpsertArticlesAsync([
+                Article(feed.Id, "below-filter", DateTimeOffset.UtcNow.AddMinutes(-2), 0.4),
+                Article(feed.Id, "visible", DateTimeOffset.UtcNow.AddMinutes(-1), 0.8)
+            ]);
+
+            var allUnread = await repository.GetUnreadCountsAsync();
+            var visibleUnread = await repository.GetUnreadCountsAsync(0.5);
+
+            Assert.Equal(2, allUnread[feed.Id]);
+            Assert.Equal(1, visibleUnread[feed.Id]);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+        }
+    }
+
+    [Fact]
     public async Task Articles_are_returned_newest_first()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"personalrss-test-{Guid.NewGuid():N}.db");
@@ -148,7 +177,7 @@ public sealed class SqliteFeedRepositoryTests
         }
     }
 
-    private static Article Article(Guid feedId, string title, DateTimeOffset publishedAt) => new()
+    private static Article Article(Guid feedId, string title, DateTimeOffset publishedAt, double score = 0.5) => new()
     {
         Id = Guid.NewGuid(),
         FeedSourceId = feedId,
@@ -156,11 +185,11 @@ public sealed class SqliteFeedRepositoryTests
         Title = title,
         Link = $"https://example.test/{title}",
         PublishedAt = publishedAt,
-        BaselineScore = 0.5,
+        BaselineScore = score,
         BaselineScoreReason = "Configured baseline.",
-        AutomaticScore = 0.5,
+        AutomaticScore = score,
         AutomaticScoreReason = "Automatic baseline.",
-        Score = 0.5,
+        Score = score,
         ScoreReason = "Automatic baseline."
     };
 

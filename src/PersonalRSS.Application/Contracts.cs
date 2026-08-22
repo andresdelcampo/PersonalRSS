@@ -12,7 +12,7 @@ public interface IFeedRepository
     Task SaveFeedAsync(FeedSource feed, CancellationToken cancellationToken = default);
     Task UpdateFeedRefreshStateAsync(Guid id, DateTimeOffset? refreshedAt, string? error, CancellationToken cancellationToken = default);
     Task<bool> MarkFeedViewedAsync(Guid id, DateTimeOffset viewedAt, CancellationToken cancellationToken = default);
-    Task<IReadOnlyDictionary<Guid, int>> GetUnreadCountsAsync(CancellationToken cancellationToken = default);
+    Task<IReadOnlyDictionary<Guid, int>> GetUnreadCountsAsync(double minimumScore = 0, CancellationToken cancellationToken = default);
     Task<int> UpsertArticlesAsync(IEnumerable<Article> articles, CancellationToken cancellationToken = default);
     Task<Article?> GetArticleAsync(Guid id, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<Article>> GetArticlesAsync(Guid? feedId, double minimumScore, int limit, CancellationToken cancellationToken = default);

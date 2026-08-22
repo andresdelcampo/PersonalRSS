@@ -40,7 +40,7 @@ public sealed class FeedImportServiceTests
         public Task SaveFeedAsync(FeedSource feed, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task UpdateFeedRefreshStateAsync(Guid id, DateTimeOffset? refreshedAt, string? error, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task<bool> MarkFeedViewedAsync(Guid id, DateTimeOffset viewedAt, CancellationToken cancellationToken = default) => Task.FromResult(Feeds.Any(feed => feed.Id == id));
-        public Task<IReadOnlyDictionary<Guid, int>> GetUnreadCountsAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyDictionary<Guid, int>>(new Dictionary<Guid, int>());
+        public Task<IReadOnlyDictionary<Guid, int>> GetUnreadCountsAsync(double minimumScore = 0, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyDictionary<Guid, int>>(new Dictionary<Guid, int>());
         public Task<int> UpsertArticlesAsync(IEnumerable<Article> articles, CancellationToken cancellationToken = default) => Task.FromResult(0);
         public Task<Article?> GetArticleAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult<Article?>(null);
         public Task<IReadOnlyList<Article>> GetArticlesAsync(Guid? feedId, double minimumScore, int limit, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Article>>([]);

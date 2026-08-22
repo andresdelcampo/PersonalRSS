@@ -104,11 +104,11 @@ public sealed class SqliteFeedRepository(IDbContextFactory<PersonalRssDbContext>
         return true;
     }
 
-    public async Task<IReadOnlyDictionary<Guid, int>> GetUnreadCountsAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyDictionary<Guid, int>> GetUnreadCountsAsync(double minimumScore = 0, CancellationToken cancellationToken = default)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var viewedAt = await db.Feeds.AsNoTracking().ToDictionaryAsync(x => x.Id, x => x.LastViewedAt, cancellationToken);
-        var articles = await db.Articles.AsNoTracking().Select(x => new { x.FeedSourceId, x.IngestedAt, x.ReadAt, x.IsUnreadPinned }).ToListAsync(cancellationToken);
+        var articles = await db.Articles.AsNoTracking().Where(x => x.Score >= minimumScore).Select(x => new { x.FeedSourceId, x.IngestedAt, x.ReadAt, x.IsUnreadPinned }).ToListAsync(cancellationToken);
         return articles
             .Where(article => viewedAt.TryGetValue(article.FeedSourceId, out var viewed) &&
                 (article.IsUnreadPinned || (article.ReadAt is null && (viewed is null || article.IngestedAt > viewed))))
