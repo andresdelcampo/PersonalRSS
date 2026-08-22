@@ -29,8 +29,54 @@ public sealed class SqliteFeedRepositoryTests
             await using var check = verify.CreateCommand();
             check.CommandText = "SELECT COUNT(*) FROM pragma_table_info('Feeds') WHERE name = 'LastViewedAt';";
             Assert.Equal(1L, await check.ExecuteScalarAsync());
+            check.CommandText = "SELECT COUNT(*) FROM pragma_table_info('Articles') WHERE name IN ('ReadAt', 'IsUnreadPinned');";
+            Assert.Equal(2L, await check.ExecuteScalarAsync());
             check.CommandText = "SELECT BaselineScore || '|' || AutomaticScore || '|' || BaselineScoreReason || '|' || AutomaticScoreReason FROM Articles WHERE Id = 'article-1';";
             Assert.Equal("0.73|0.73|Legacy score.|Legacy score.", await check.ExecuteScalarAsync());
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task Article_read_state_supports_manual_unread_protection_and_bulk_read_actions()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"personalrss-read-state-test-{Guid.NewGuid():N}.db");
+        try
+        {
+            var options = new DbContextOptionsBuilder<PersonalRssDbContext>().UseSqlite($"Data Source={databasePath}").Options;
+            var repository = new SqliteFeedRepository(new TestContextFactory(options));
+            await repository.InitializeAsync();
+            var feed = new FeedSource { Name = "Test", Slug = "test", Url = "https://example.test/rss" };
+            await repository.AddFeedAsync(feed);
+            await repository.UpsertArticlesAsync([
+                Article(feed.Id, "first", DateTimeOffset.UtcNow.AddHours(-2)),
+                Article(feed.Id, "second", DateTimeOffset.UtcNow.AddHours(-1))
+            ]);
+            var articles = await repository.GetArticlesAsync(feed.Id, 0, 100);
+            await repository.MarkFeedViewedAsync(feed.Id, DateTimeOffset.UtcNow);
+
+            Assert.True(await repository.SetArticleReadStateAsync(articles[0].Id, true, false, DateTimeOffset.UtcNow));
+            var unread = await repository.GetUnreadCountsAsync();
+            Assert.Equal(1, unread[feed.Id]);
+            var rated = await repository.GetArticlesAsync(feed.Id, 0, 100);
+            Assert.True(rated.Single(article => article.Id == articles[0].Id).IsUnread);
+            Assert.True(rated.Single(article => article.Id == articles[0].Id).IsUnreadPinned);
+
+            Assert.Equal(0, await repository.MarkArticlesReadAsync([articles[0].Id], true, DateTimeOffset.UtcNow));
+            unread = await repository.GetUnreadCountsAsync();
+            Assert.Equal(1, unread[feed.Id]);
+
+            Assert.Equal(1, await repository.MarkArticlesReadAsync([articles[0].Id], false, DateTimeOffset.UtcNow));
+            Assert.False((await repository.GetUnreadCountsAsync()).ContainsKey(feed.Id));
+
+            await repository.SetArticleReadStateAsync(articles[1].Id, true, false, DateTimeOffset.UtcNow);
+            Assert.True(await repository.MarkFeedViewedAsync(feed.Id, DateTimeOffset.UtcNow));
+            Assert.False((await repository.GetUnreadCountsAsync()).ContainsKey(feed.Id));
+            Assert.False((await repository.GetArticlesAsync(feed.Id, 0, 100)).Single(article => article.Id == articles[1].Id).IsUnreadPinned);
         }
         finally
         {

@@ -14,6 +14,8 @@ public sealed class SqliteFeedRepository(IDbContextFactory<PersonalRssDbContext>
         try
         {
             await EnsureColumnAsync(db, "Feeds", "LastViewedAt", "TEXT NULL", cancellationToken);
+            await EnsureColumnAsync(db, "Articles", "ReadAt", "TEXT NULL", cancellationToken);
+            await EnsureColumnAsync(db, "Articles", "IsUnreadPinned", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
             var addedBaselineScore = await EnsureColumnAsync(db, "Articles", "BaselineScore", "REAL NOT NULL DEFAULT 0.5", cancellationToken);
             var addedBaselineReason = await EnsureColumnAsync(db, "Articles", "BaselineScoreReason", "TEXT NULL", cancellationToken);
             var addedAutomaticScore = await EnsureColumnAsync(db, "Articles", "AutomaticScore", "REAL NOT NULL DEFAULT 0.5", cancellationToken);
@@ -96,6 +98,8 @@ public sealed class SqliteFeedRepository(IDbContextFactory<PersonalRssDbContext>
         var feed = await db.Feeds.SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
         if (feed is null) return false;
         feed.LastViewedAt = viewedAt;
+        var pinnedArticles = await db.Articles.Where(x => x.FeedSourceId == id && x.IsUnreadPinned).ToListAsync(cancellationToken);
+        foreach (var article in pinnedArticles) article.IsUnreadPinned = false;
         await db.SaveChangesAsync(cancellationToken);
         return true;
     }
@@ -104,9 +108,10 @@ public sealed class SqliteFeedRepository(IDbContextFactory<PersonalRssDbContext>
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var viewedAt = await db.Feeds.AsNoTracking().ToDictionaryAsync(x => x.Id, x => x.LastViewedAt, cancellationToken);
-        var articles = await db.Articles.AsNoTracking().Select(x => new { x.FeedSourceId, x.IngestedAt }).ToListAsync(cancellationToken);
+        var articles = await db.Articles.AsNoTracking().Select(x => new { x.FeedSourceId, x.IngestedAt, x.ReadAt, x.IsUnreadPinned }).ToListAsync(cancellationToken);
         return articles
-            .Where(article => viewedAt.TryGetValue(article.FeedSourceId, out var viewed) && (viewed is null || article.IngestedAt > viewed))
+            .Where(article => viewedAt.TryGetValue(article.FeedSourceId, out var viewed) &&
+                (article.IsUnreadPinned || (article.ReadAt is null && (viewed is null || article.IngestedAt > viewed))))
             .GroupBy(article => article.FeedSourceId)
             .ToDictionary(group => group.Key, group => group.Count());
     }
@@ -152,6 +157,7 @@ public sealed class SqliteFeedRepository(IDbContextFactory<PersonalRssDbContext>
         var query = db.Articles.AsNoTracking().Where(x => x.Score >= minimumScore);
         if (feedId.HasValue) query = query.Where(x => x.FeedSourceId == feedId.Value);
         var articles = await query.ToListAsync(cancellationToken);
+        var viewedAt = await db.Feeds.AsNoTracking().ToDictionaryAsync(x => x.Id, x => x.LastViewedAt, cancellationToken);
         var articleIds = articles.Select(x => x.Id).ToHashSet();
         var activeFeedback = (await db.Feedback.AsNoTracking()
                 .Where(x => articleIds.Contains(x.ArticleId))
@@ -159,8 +165,42 @@ public sealed class SqliteFeedRepository(IDbContextFactory<PersonalRssDbContext>
             .GroupBy(x => x.ArticleId)
             .ToDictionary(group => group.Key, group => group.OrderByDescending(x => x.CreatedAt).First().Kind);
         foreach (var article in articles)
+        {
             if (activeFeedback.TryGetValue(article.Id, out var kind)) article.ActiveFeedback = kind;
+            article.IsUnread = viewedAt.TryGetValue(article.FeedSourceId, out var viewed) &&
+                (article.IsUnreadPinned || (article.ReadAt is null && (viewed is null || article.IngestedAt > viewed)));
+        }
         return articles.OrderByDescending(x => x.PublishedAt).Take(Math.Clamp(limit, 1, 500)).ToList();
+    }
+
+    public async Task<bool> SetArticleReadStateAsync(Guid articleId, bool isUnread, bool automatic, DateTimeOffset changedAt, CancellationToken cancellationToken = default)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var article = await db.Articles.SingleOrDefaultAsync(x => x.Id == articleId, cancellationToken);
+        if (article is null) return false;
+        if (automatic && article.IsUnreadPinned) return true;
+        article.ReadAt = isUnread ? null : changedAt;
+        article.IsUnreadPinned = isUnread || (automatic && article.IsUnreadPinned);
+        await db.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
+    public async Task<int> MarkArticlesReadAsync(IReadOnlyCollection<Guid> articleIds, bool automatic, DateTimeOffset readAt, CancellationToken cancellationToken = default)
+    {
+        if (articleIds.Count == 0) return 0;
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var ids = articleIds.Distinct().ToHashSet();
+        var articles = await db.Articles.Where(x => ids.Contains(x.Id)).ToListAsync(cancellationToken);
+        var changed = 0;
+        foreach (var article in articles)
+        {
+            if (automatic && article.IsUnreadPinned) continue;
+            article.ReadAt = readAt;
+            if (!automatic) article.IsUnreadPinned = false;
+            changed++;
+        }
+        await db.SaveChangesAsync(cancellationToken);
+        return changed;
     }
 
     public async Task<IReadOnlyList<FeedbackExample>> GetFeedbackExamplesAsync(Guid? excludingArticleId = null, CancellationToken cancellationToken = default)

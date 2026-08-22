@@ -27,6 +27,8 @@ public sealed class Article
     public string? Author { get; set; }
     public DateTimeOffset PublishedAt { get; set; }
     public DateTimeOffset IngestedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset? ReadAt { get; set; }
+    public bool IsUnreadPinned { get; set; }
     public double BaselineScore { get; set; } = 0.5;
     public string? BaselineScoreReason { get; set; }
     public double AutomaticScore { get; set; } = 0.5;
@@ -35,6 +37,8 @@ public sealed class Article
     public string? ScoreReason { get; set; }
     [NotMapped]
     public FeedbackKind? ActiveFeedback { get; set; }
+    [NotMapped]
+    public bool IsUnread { get; set; }
 }
 
 public sealed class ArticleFeedback
