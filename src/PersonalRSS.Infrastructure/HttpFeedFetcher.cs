@@ -21,7 +21,7 @@ public sealed class HttpFeedFetcher(HttpClient httpClient) : IFeedFetcher
         {
             var link = Value(item, "link") ?? string.Empty;
             return new ArticleCandidate(Value(item, "guid") ?? link, Value(item, "title") ?? "Untitled", link,
-                SummaryWithImage(item, Value(item, "description")), Value(item, "creator") ?? Value(item, "author"), ParseDate(Value(item, "pubDate")));
+                SummaryWithImage(item, Value(item, "encoded") ?? Value(item, "description")), Value(item, "creator") ?? Value(item, "author"), ParseDate(Value(item, "pubDate")));
         }).Where(x => !string.IsNullOrWhiteSpace(x.Link)).ToList();
 
     private static IReadOnlyList<ArticleCandidate> ParseAtom(XDocument document) =>
@@ -29,7 +29,7 @@ public sealed class HttpFeedFetcher(HttpClient httpClient) : IFeedFetcher
         {
             var link = entry.Elements().FirstOrDefault(x => x.Name.LocalName == "link" && ((string?)x.Attribute("rel") is null or "alternate"))?.Attribute("href")?.Value ?? string.Empty;
             return new ArticleCandidate(Value(entry, "id") ?? link, Value(entry, "title") ?? "Untitled", link,
-                SummaryWithImage(entry, Value(entry, "summary") ?? Value(entry, "content")),
+                SummaryWithImage(entry, Value(entry, "content") ?? Value(entry, "summary")),
                 entry.Elements().FirstOrDefault(x => x.Name.LocalName == "author")?.Elements().FirstOrDefault(x => x.Name.LocalName == "name")?.Value,
                 ParseDate(Value(entry, "published") ?? Value(entry, "updated")));
         }).Where(x => !string.IsNullOrWhiteSpace(x.Link)).ToList();
