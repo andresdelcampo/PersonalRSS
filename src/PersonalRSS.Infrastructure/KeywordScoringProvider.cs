@@ -11,6 +11,7 @@ public sealed class ScoringOptions
     public double KeywordWeight { get; set; } = 0.12;
     public string[] PositiveKeywords { get; set; } = [];
     public string[] NegativeKeywords { get; set; } = [];
+    public PreferenceLearningOptions PreferenceLearning { get; set; } = new();
 }
 
 public sealed class KeywordScoringProvider(IOptions<ScoringOptions> options) : IScoringProvider

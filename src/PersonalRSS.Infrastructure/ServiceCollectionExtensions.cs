@@ -13,7 +13,8 @@ public static class ServiceCollectionExtensions
         services.Configure<ScoringOptions>(configuration.GetSection(ScoringOptions.SectionName));
         services.AddPooledDbContextFactory<PersonalRssDbContext>(options => options.UseSqlite(connectionString));
         services.AddSingleton<IFeedRepository, SqliteFeedRepository>();
-        services.AddSingleton<IScoringProvider, KeywordScoringProvider>();
+        services.AddSingleton<KeywordScoringProvider>();
+        services.AddSingleton<IScoringProvider, LocalPreferenceScoringProvider>();
         services.AddSingleton<IFilteredFeedRenderer, RssFeedRenderer>();
         services.AddSingleton<ISubscriptionListParser, OpmlSubscriptionListParser>();
         services.AddHttpClient<IFeedFetcher, HttpFeedFetcher>(client => { client.Timeout = TimeSpan.FromSeconds(30); client.DefaultRequestHeaders.UserAgent.ParseAdd("PersonalRSS/0.1"); });
