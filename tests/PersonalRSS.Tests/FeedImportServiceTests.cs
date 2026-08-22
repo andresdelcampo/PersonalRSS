@@ -44,7 +44,9 @@ public sealed class FeedImportServiceTests
         public Task<int> UpsertArticlesAsync(IEnumerable<Article> articles, CancellationToken cancellationToken = default) => Task.FromResult(0);
         public Task<Article?> GetArticleAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult<Article?>(null);
         public Task<IReadOnlyList<Article>> GetArticlesAsync(Guid? feedId, double minimumScore, int limit, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Article>>([]);
-        public Task AddFeedbackAsync(ArticleFeedback feedback, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task<IReadOnlyList<FeedbackExample>> GetFeedbackExamplesAsync(Guid? excludingArticleId = null, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<FeedbackExample>>([]);
+        public Task SetFeedbackAsync(Guid articleId, FeedbackKind kind, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task ClearFeedbackAsync(Guid articleId, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }

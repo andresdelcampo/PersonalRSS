@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations.Schema;
+
 namespace PersonalRSS.Core;
 
 public sealed class FeedSource
@@ -25,8 +27,14 @@ public sealed class Article
     public string? Author { get; set; }
     public DateTimeOffset PublishedAt { get; set; }
     public DateTimeOffset IngestedAt { get; set; } = DateTimeOffset.UtcNow;
+    public double BaselineScore { get; set; } = 0.5;
+    public string? BaselineScoreReason { get; set; }
+    public double AutomaticScore { get; set; } = 0.5;
+    public string? AutomaticScoreReason { get; set; }
     public double Score { get; set; }
     public string? ScoreReason { get; set; }
+    [NotMapped]
+    public FeedbackKind? ActiveFeedback { get; set; }
 }
 
 public sealed class ArticleFeedback
@@ -38,6 +46,23 @@ public sealed class ArticleFeedback
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
-public enum FeedbackKind { NotInterested = -1, Interested = 1 }
-public sealed record ArticleCandidate(string ExternalId, string Title, string Link, string? Summary, string? Author, DateTimeOffset PublishedAt);
-public sealed record ScoreResult(double Value, string Reason);
+public enum FeedbackKind
+{
+    NeverThisTopic = -2,
+    NotInterested = -1,
+    Interested = 1,
+    VeryInterested = 2
+}
+
+public sealed record ArticleCandidate(
+    string ExternalId,
+    string Title,
+    string Link,
+    string? Summary,
+    string? Author,
+    DateTimeOffset PublishedAt,
+    Guid? FeedSourceId = null,
+    string? FeedName = null);
+
+public sealed record FeedbackExample(ArticleCandidate Article, FeedbackKind Kind);
+public sealed record ScoreResult(double Value, string Reason, double? BaselineValue = null, string? BaselineReason = null);

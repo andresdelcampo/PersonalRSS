@@ -17,7 +17,7 @@ public sealed class SqliteFeedRepositoryTests
             {
                 await connection.OpenAsync();
                 await using var create = connection.CreateCommand();
-                create.CommandText = "CREATE TABLE Feeds (Id TEXT NOT NULL PRIMARY KEY);";
+                create.CommandText = "CREATE TABLE Feeds (Id TEXT NOT NULL PRIMARY KEY); CREATE TABLE Articles (Id TEXT NOT NULL PRIMARY KEY, Score REAL NOT NULL, ScoreReason TEXT NULL); INSERT INTO Articles (Id, Score, ScoreReason) VALUES ('article-1', 0.73, 'Legacy score.');";
                 await create.ExecuteNonQueryAsync();
             }
             var options = new DbContextOptionsBuilder<PersonalRssDbContext>().UseSqlite($"Data Source={databasePath}").Options;
@@ -29,6 +29,8 @@ public sealed class SqliteFeedRepositoryTests
             await using var check = verify.CreateCommand();
             check.CommandText = "SELECT COUNT(*) FROM pragma_table_info('Feeds') WHERE name = 'LastViewedAt';";
             Assert.Equal(1L, await check.ExecuteScalarAsync());
+            check.CommandText = "SELECT BaselineScore || '|' || AutomaticScore || '|' || BaselineScoreReason || '|' || AutomaticScoreReason FROM Articles WHERE Id = 'article-1';";
+            Assert.Equal("0.73|0.73|Legacy score.|Legacy score.", await check.ExecuteScalarAsync());
         }
         finally
         {
@@ -66,13 +68,32 @@ public sealed class SqliteFeedRepositoryTests
             var unreadAfterViewing = await repository.GetUnreadCountsAsync();
             Assert.False(unreadAfterViewing.ContainsKey(feed.Id));
 
-            await repository.AddFeedbackAsync(new ArticleFeedback { ArticleId = articles[1].Id, Kind = FeedbackKind.NotInterested });
+            await repository.SetFeedbackAsync(articles[1].Id, FeedbackKind.NotInterested);
             var filtered = await repository.GetArticlesAsync(feed.Id, 0.5, 100);
             var overridden = await repository.GetArticleAsync(articles[1].Id);
+            var rated = await repository.GetArticlesAsync(feed.Id, 0, 100);
 
             Assert.DoesNotContain(filtered, article => article.Id == articles[1].Id);
-            Assert.Equal(0, overridden?.Score);
+            Assert.Equal(0.1, overridden?.Score);
+            Assert.Equal(0.5, overridden?.BaselineScore);
+            Assert.Equal(0.5, overridden?.AutomaticScore);
             Assert.Contains("not interesting", overridden?.ScoreReason);
+            Assert.Equal(FeedbackKind.NotInterested, rated.Single(article => article.Id == articles[1].Id).ActiveFeedback);
+
+            await repository.SetFeedbackAsync(articles[1].Id, FeedbackKind.Interested);
+            rated = await repository.GetArticlesAsync(feed.Id, 0, 100);
+            Assert.Equal(FeedbackKind.Interested, rated.Single(article => article.Id == articles[1].Id).ActiveFeedback);
+            Assert.Equal(0.9, rated.Single(article => article.Id == articles[1].Id).Score);
+            await using (var verifyFeedback = new PersonalRssDbContext(options))
+                Assert.Equal(1, await verifyFeedback.Feedback.CountAsync(item => item.ArticleId == articles[1].Id));
+
+            await repository.ClearFeedbackAsync(articles[1].Id);
+            rated = await repository.GetArticlesAsync(feed.Id, 0, 100);
+            Assert.Null(rated.Single(article => article.Id == articles[1].Id).ActiveFeedback);
+            Assert.Equal(0.5, rated.Single(article => article.Id == articles[1].Id).Score);
+            Assert.Equal("Automatic baseline.", rated.Single(article => article.Id == articles[1].Id).ScoreReason);
+            await using (var verifyFeedback = new PersonalRssDbContext(options))
+                Assert.Empty(await verifyFeedback.Feedback.Where(item => item.ArticleId == articles[1].Id).ToListAsync());
         }
         finally
         {
@@ -83,8 +104,18 @@ public sealed class SqliteFeedRepositoryTests
 
     private static Article Article(Guid feedId, string title, DateTimeOffset publishedAt) => new()
     {
-        Id = Guid.NewGuid(), FeedSourceId = feedId, ExternalId = title, Title = title,
-        Link = $"https://example.test/{title}", PublishedAt = publishedAt, Score = 0.5
+        Id = Guid.NewGuid(),
+        FeedSourceId = feedId,
+        ExternalId = title,
+        Title = title,
+        Link = $"https://example.test/{title}",
+        PublishedAt = publishedAt,
+        BaselineScore = 0.5,
+        BaselineScoreReason = "Configured baseline.",
+        AutomaticScore = 0.5,
+        AutomaticScoreReason = "Automatic baseline.",
+        Score = 0.5,
+        ScoreReason = "Automatic baseline."
     };
 
     private sealed class TestContextFactory(DbContextOptions<PersonalRssDbContext> options) : IDbContextFactory<PersonalRssDbContext>

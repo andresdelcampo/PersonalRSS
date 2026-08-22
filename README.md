@@ -2,7 +2,7 @@
 
 PersonalRSS is a self-hosted filtering layer between public RSS/Atom feeds and an existing reader such as The Old Reader. It fetches source feeds, scores articles, stores results in SQLite, and exposes new filtered RSS URLs.
 
-This repository is intentionally an MVP foundation. The first scoring provider is a transparent keyword baseline; its provider interface and stored feedback make it possible to add embeddings or learned ranking later without coupling that work to ingestion or HTTP delivery.
+PersonalRSS combines a transparent keyword baseline with an entirely local preference model. Feedback teaches weighted terms, phrases, authors, and sources; related future articles receive an explainable adjustment without calling an LLM or another service. The provider interface still leaves room for optional embeddings or model providers later without coupling them to ingestion or HTTP delivery.
 
 ## Architecture
 
@@ -23,9 +23,11 @@ dotnet restore
 dotnet run --project src/PersonalRSS.Web
 ```
 
-Open the address printed by ASP.NET Core. Add one source manually or upload an OPML subscription export from the expandable controls below the source list. Opening the dashboard refreshes every source automatically and reports persistent unread counts; refreshing does not clear them. Select a feed name to open its readable article cards and mark that feed viewed, use **Rename** to choose a friendlier display name, and copy the external-reader RSS URL from the preview. SQLite data is stored in `data/personalrss.db` relative to the web application's content directory.
+Open the address printed by ASP.NET Core. Add one source manually or upload an OPML subscription export from the expandable controls below the source list. Opening the dashboard refreshes every source automatically and reports persistent unread counts; refreshing and opening a feed do not clear them. Select a feed name to open its readable article cards, use **Mark all read** in the feed's top actions when you want to clear its unread count, use **Rename** to choose a friendlier display name, and copy the external-reader RSS URL from the preview. SQLite data is stored in `data/personalrss.db` relative to the web application's content directory.
 
-The preview shows feed-provided images, summary text, relevance scores, and scoring reasons. **More like this** and **Less like this** immediately override the selected article's score and store the vote as future training data. Generated RSS items link back to their PersonalRSS preview because external readers cannot host interactive voting controls.
+The preview shows feed-provided images, summary text, relevance scores, baseline scores, and scoring reasons. Its unread total deliberately counts every newly stored article across all relevance scores, including articles hidden by the current preview threshold; **Mark all read** clears that whole-feed total. Four mutually exclusive feedback choices—**Very interested**, **Interested**, **Not interested**, and **Never this topic**—supply different positive or negative learning weights and immediately override the selected article's effective score. Click the active choice again to undo it and restore the stored automatic score. The baseline, learned automatic score, and manual effective score are stored separately, so feedback never destroys the score it replaced. Actively rated articles remain visible in the preview so a low score cannot hide its own undo control. Generated RSS items link back to their PersonalRSS preview because external readers cannot host interactive voting controls.
+
+The local model learns from words and adjacent phrases in titles and summaries plus exact author and source matches. It ignores common words, gives strong feedback twice the weight of ordinary feedback, caps its adjustment, and explains the strongest matching evidence on every scored article. Refreshing a feed scores all fetched articles against one feedback snapshot, so the learning step does not make a database query for every article.
 
 OPML imports preserve feed titles, accept nested folder exports, and are safe to repeat. Existing and repeated feed URLs are skipped rather than duplicated. Folder names are parsed for forward compatibility but are not stored in the current schema.
 
@@ -59,13 +61,13 @@ Open <http://localhost:8080>. A named volume persists the database.
 - Refresh runs when the management dashboard loads. Background scheduling follows after ingestion proves reliable.
 - Common RSS 2.0 and Atom are supported; unusual extensions may need dedicated handling.
 - OPML folder names are not displayed yet; all imported feeds appear in one source list.
-- Feedback immediately includes or excludes the selected article, but does not retrain the baseline provider for future articles yet.
+- The local learner is deliberately lightweight and lexical. It understands recurring terms and phrases but does not yet provide embedding-based semantic similarity.
 - `EnsureCreated` simplifies first run. Add EF Core migrations before evolving important databases.
 
 ## Likely next increments
 
 1. Scheduled refresh with per-feed intervals and conditional HTTP requests.
 2. OPML export and source-folder organization.
-3. Feedback-aware scoring, then optional local embeddings or BYOK model support.
+3. Confidence-aware scoring, explicit High/Maybe/Filtered feeds, and preference inspection/editing.
 4. Authentication and SSRF defenses before exposure beyond a trusted LAN.
-5. Observability, retention rules, and database migrations.
+5. Observability, retention rules, and full EF Core migrations. Startup currently performs narrow compatibility upgrades for existing MVP databases.

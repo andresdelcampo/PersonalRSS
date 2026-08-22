@@ -16,12 +16,15 @@ public interface IFeedRepository
     Task<int> UpsertArticlesAsync(IEnumerable<Article> articles, CancellationToken cancellationToken = default);
     Task<Article?> GetArticleAsync(Guid id, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<Article>> GetArticlesAsync(Guid? feedId, double minimumScore, int limit, CancellationToken cancellationToken = default);
-    Task AddFeedbackAsync(ArticleFeedback feedback, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<FeedbackExample>> GetFeedbackExamplesAsync(Guid? excludingArticleId = null, CancellationToken cancellationToken = default);
+    Task SetFeedbackAsync(Guid articleId, FeedbackKind kind, CancellationToken cancellationToken = default);
+    Task ClearFeedbackAsync(Guid articleId, CancellationToken cancellationToken = default);
     Task InitializeAsync(CancellationToken cancellationToken = default);
 }
 
 public interface IFeedFetcher { Task<IReadOnlyList<ArticleCandidate>> FetchAsync(FeedSource source, CancellationToken cancellationToken = default); }
 public interface IScoringProvider { string Name { get; } Task<ScoreResult> ScoreAsync(ArticleCandidate article, CancellationToken cancellationToken = default); }
+public interface IBatchScoringProvider : IScoringProvider { Task<IReadOnlyList<ScoreResult>> ScoreAsync(IReadOnlyList<ArticleCandidate> articles, CancellationToken cancellationToken = default); }
 public interface IFilteredFeedRenderer { string Render(FeedSource source, IReadOnlyList<Article> articles, Uri publicFeedUri); }
 public interface ISubscriptionListParser { Task<IReadOnlyList<SubscriptionCandidate>> ParseAsync(Stream content, CancellationToken cancellationToken = default); }
 public sealed record SubscriptionCandidate(string Name, string Url, string? Folder);
