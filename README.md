@@ -8,6 +8,10 @@ PersonalRSS is a private, self-hosted feed reader that learns which stories matt
 
 It can also publish each filtered feed as a standard RSS URL, so you can keep using an existing reader such as The Old Reader.
 
+<p align="center">
+  <img src="docs/personalrss-reading-view.png" alt="PersonalRSS reading view with the private subscription list blurred" width="1100">
+</p>
+
 ## What you can do
 
 - Add feeds individually or import an OPML subscription export.
