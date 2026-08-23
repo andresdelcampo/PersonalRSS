@@ -23,17 +23,29 @@ dotnet restore
 dotnet run --project src/PersonalRSS.Web
 ```
 
-Open the address printed by ASP.NET Core. Add one source manually or upload an OPML subscription export from the expandable controls below the source list. Opening the dashboard refreshes every source automatically and reports persistent unread counts at the preview's default minimum score of 0.5, so each badge matches the posts shown when that feed opens. Refreshing and opening a feed do not clear them. The preview separately retains the all-scores unread total for **Mark all read**. Select a feed name to open its readable article cards, use **Mark visible read** for the currently displayed unread posts or **Mark all read** for the whole feed across every score, use **Rename** to choose a friendlier display name, and copy the external-reader RSS URL from the preview. SQLite data is stored in `data/personalrss.db` relative to the web application's content directory.
+Open the address printed by ASP.NET Core. Add one source manually or upload an OPML subscription export from the expandable controls below the source list. Opening the Sources dashboard refreshes every source automatically and reports persistent unread counts at the preview's default minimum score of 0.5, so each badge matches the posts shown when that feed opens. Refreshing and opening a feed do not clear them. The preview separately retains the all-scores unread total for **Mark all read**. Select a feed name to open its readable article cards, use **Mark visible read** for the currently displayed unread posts or **Mark all read** for the whole feed across every score, and use **Rename** to choose a friendlier display name. **Remove feed** asks for confirmation before permanently deleting that source, its stored articles, and their feedback. SQLite data is stored in `data/personalrss.db` relative to the web application's content directory.
 
 The preview defaults to **Unread**. **All posts** adds 25 older read posts at a time, with **Load 25 older read posts** for further history. A fresh page load orders unread posts first and sorts each read-state group by relevance and publication date; button presses never reshuffle the current page. Each card's **Unread/Read** control persists an individual override. Manually setting a post unread protects it from scroll-based automatic reading until the user explicitly marks it read, votes on it, includes it in **Mark visible read**, or uses **Mark all read**. Posts automatically or manually marked read remain in place for the current page session so reading never makes the list jump.
 
-**Mark read while scrolling** is enabled by default and can be disabled in the feed controls; the preference is remembered by the browser. It marks an unpinned post read only after the end of its card has remained inside the reading viewport for a short interval. The final displayed post uses the bottom of the viewport as its reading boundary because no following card provides additional scrolling room. Voting is also considered deliberate consumption and marks that post read. **Show full feed content** replaces the card's summary and thumbnail in place with the sanitized text, links, images, tables, and code supplied inside the RSS item; when expanded, **Show summary** moves above the full content so even a long post can be collapsed immediately. Feeds that publish only an excerpt cannot expose content they did not include.
+**Mark read while scrolling** is enabled by default and can be disabled in the feed controls; the preference is remembered by the browser. It marks an unpinned post read only after the end of its card has remained inside the reading viewport for a short interval. The final displayed post uses the bottom of the viewport as its reading boundary because no following card provides additional scrolling room. Voting is also considered deliberate consumption and marks that post read. **Show full feed content** replaces the card's summary and thumbnail in place with the sanitized text, links, images, tables, and code supplied inside the RSS item; when expanded, **Show summary** appears both above and below the full content so a long post can be collapsed from either end. Feeds that publish only an excerpt cannot expose content they did not include.
 
 The preview also shows relevance scores, baseline scores, and scoring reasons. Its unread total deliberately counts every newly stored article across all relevance scores, including articles hidden by the current preview threshold; **Mark all read** clears that whole-feed total. Four mutually exclusive feedback choices—**Very interested**, **Interested**, **Not interested**, and **Never this topic**—supply different positive or negative learning weights and immediately override the selected article's effective score. Click the active choice again to undo it and restore the stored automatic score. The baseline, learned automatic score, and manual effective score are stored separately, so feedback never destroys the score it replaced. A newly rejected article remains visible just long enough to undo the click; changing the score filter or leaving the page removes that temporary exception and applies filtering normally. Generated RSS items link back to their PersonalRSS preview because external readers cannot host interactive voting controls.
 
 The local model learns from words and adjacent phrases in titles and summaries plus exact author and source matches. It ignores common words, gives strong feedback twice the weight of ordinary feedback, caps its adjustment, and explains the strongest matching evidence on every scored article. Refreshing a feed scores all fetched articles against one feedback snapshot, so the learning step does not make a database query for every article.
 
 OPML imports preserve feed titles, accept nested folder exports, and are safe to repeat. Existing and repeated feed URLs are skipped rather than duplicated. Folder names are parsed for forward compatibility but are not stored in the current schema.
+
+## Replace the live Windows instance
+
+Double-click `Deploy-PersonalRSS.cmd`, or run the checked-in deployment script from a normal Windows PowerShell session with outbound network access:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Restart-PersonalRSS.ps1
+```
+
+The script checks outbound HTTPS before touching the current process, publishes Release files to staging, verifies that the listener on `127.0.0.1:5187` is the expected PersonalRSS executable, replaces that process, waits for `/health`, and refreshes every configured feed. It reports success only when every refresh succeeds and no feed retains a `lastError`.
+
+Do not launch the live instance from a restricted or sandboxed process. Such an instance can return `200` from `/health` while every feed refresh fails with Windows socket error `10013`. When Codex performs the replacement, the restart command must therefore be approved to run outside its workspace sandbox. A successful deployment requires both the health check and the all-feed refresh verification; `/health` alone is not sufficient.
 
 ## Docker
 
@@ -52,6 +64,7 @@ Open <http://localhost:8080>. A named volume persists the database.
 | `GET` | `/health` | Health check |
 | `GET` / `POST` | `/api/feeds` | List or add sources |
 | `PUT` | `/api/feeds/{id}` | Rename a source without changing its stable RSS URL |
+| `DELETE` | `/api/feeds/{id}` | Remove a source and its stored articles and feedback |
 | `POST` | `/api/feeds/import/opml` | Upload an OPML subscription list |
 | `POST` | `/api/feeds/{id}/refresh` | Fetch and score now |
 | `POST` | `/api/feeds/{id}/viewed` | Mark the feed viewed for unread counting |

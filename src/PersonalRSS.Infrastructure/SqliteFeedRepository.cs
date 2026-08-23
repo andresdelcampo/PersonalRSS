@@ -82,6 +82,16 @@ public sealed class SqliteFeedRepository(IDbContextFactory<PersonalRssDbContext>
         await db.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task<bool> DeleteFeedAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var feed = await db.Feeds.SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+        if (feed is null) return false;
+        db.Feeds.Remove(feed);
+        await db.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
     public async Task UpdateFeedRefreshStateAsync(Guid id, DateTimeOffset? refreshedAt, string? error, CancellationToken cancellationToken = default)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);

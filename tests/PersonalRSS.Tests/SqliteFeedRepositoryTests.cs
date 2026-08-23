@@ -115,6 +115,41 @@ public sealed class SqliteFeedRepositoryTests
     }
 
     [Fact]
+    public async Task Delete_feed_removes_its_articles_and_feedback()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"personalrss-delete-feed-test-{Guid.NewGuid():N}.db");
+        try
+        {
+            var options = new DbContextOptionsBuilder<PersonalRssDbContext>().UseSqlite($"Data Source={databasePath}").Options;
+            var repository = new SqliteFeedRepository(new TestContextFactory(options));
+            await repository.InitializeAsync();
+            var removedFeed = new FeedSource { Name = "Remove me", Slug = "remove-me", Url = "https://example.test/remove.xml" };
+            var retainedFeed = new FeedSource { Name = "Keep me", Slug = "keep-me", Url = "https://example.test/keep.xml" };
+            await repository.AddFeedsAsync([removedFeed, retainedFeed]);
+            await repository.UpsertArticlesAsync([
+                Article(removedFeed.Id, "removed article", DateTimeOffset.UtcNow),
+                Article(retainedFeed.Id, "retained article", DateTimeOffset.UtcNow)
+            ]);
+            var removedArticle = (await repository.GetArticlesAsync(removedFeed.Id, 0, 100)).Single();
+            await repository.SetFeedbackAsync(removedArticle.Id, FeedbackKind.Interested);
+
+            Assert.True(await repository.DeleteFeedAsync(removedFeed.Id));
+            Assert.Null(await repository.GetFeedAsync(removedFeed.Id));
+            Assert.NotNull(await repository.GetFeedAsync(retainedFeed.Id));
+            Assert.Empty(await repository.GetArticlesAsync(removedFeed.Id, 0, 100));
+            Assert.Single(await repository.GetArticlesAsync(retainedFeed.Id, 0, 100));
+            await using (var verify = new PersonalRssDbContext(options))
+                Assert.Empty(await verify.Feedback.Where(item => item.ArticleId == removedArticle.Id).ToListAsync());
+            Assert.False(await repository.DeleteFeedAsync(removedFeed.Id));
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+        }
+    }
+
+    [Fact]
     public async Task Articles_are_returned_newest_first()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"personalrss-test-{Guid.NewGuid():N}.db");
