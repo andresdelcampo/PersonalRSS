@@ -114,6 +114,22 @@ public sealed class SqliteFeedRepository(IDbContextFactory<PersonalRssDbContext>
         return true;
     }
 
+    public async Task<bool> MarkFeedUnreadAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var feed = await db.Feeds.SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+        if (feed is null) return false;
+        feed.LastViewedAt = null;
+        var articles = await db.Articles.Where(x => x.FeedSourceId == id).ToListAsync(cancellationToken);
+        foreach (var article in articles)
+        {
+            article.ReadAt = null;
+            article.IsUnreadPinned = false;
+        }
+        await db.SaveChangesAsync(cancellationToken);
+        return true;
+    }
+
     public async Task<IReadOnlyDictionary<Guid, int>> GetUnreadCountsAsync(double minimumScore = 0, CancellationToken cancellationToken = default)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);

@@ -77,6 +77,13 @@ public sealed class SqliteFeedRepositoryTests
             Assert.True(await repository.MarkFeedViewedAsync(feed.Id, DateTimeOffset.UtcNow));
             Assert.False((await repository.GetUnreadCountsAsync()).ContainsKey(feed.Id));
             Assert.False((await repository.GetArticlesAsync(feed.Id, 0, 100)).Single(article => article.Id == articles[1].Id).IsUnreadPinned);
+
+            Assert.True(await repository.MarkFeedUnreadAsync(feed.Id));
+            Assert.Equal(2, (await repository.GetUnreadCountsAsync())[feed.Id]);
+            var reset = await repository.GetArticlesAsync(feed.Id, 0, 100);
+            Assert.All(reset, article => Assert.True(article.IsUnread));
+            Assert.All(reset, article => Assert.False(article.IsUnreadPinned));
+            Assert.False(await repository.MarkFeedUnreadAsync(Guid.NewGuid()));
         }
         finally
         {
