@@ -1,29 +1,39 @@
-# PersonalRSS
+<p align="center">
+  <img src="docs/personalrss-wordmark.svg" alt="PersonalRSS" width="620">
+</p>
 
-PersonalRSS is a self-hosted filtering layer between public RSS/Atom feeds and an existing reader such as The Old Reader. It fetches source feeds, scores articles, stores results in SQLite, and exposes new filtered RSS URLs.
+<p align="center"><strong>Your feeds, quietly filtered.</strong></p>
 
-PersonalRSS combines a transparent keyword baseline with an entirely local preference model. Feedback teaches weighted terms, phrases, authors, and sources; related future articles receive an explainable adjustment without calling an LLM or another service. The provider interface still leaves room for optional embeddings or model providers later without coupling them to ingestion or HTTP delivery.
+PersonalRSS is a private, self-hosted feed reader that learns which stories matter to you. It brings RSS and Atom subscriptions into one calm reading view, scores new posts using an explainable local model, and lets you filter out the noise without sending your reading history to an AI service.
 
-## Architecture
+It can also publish each filtered feed as a standard RSS URL, so you can keep using an existing reader such as The Old Reader.
 
-- `PersonalRSS.Core` — domain models with no infrastructure dependencies.
-- `PersonalRSS.Application` — ports and the feed-refresh use case.
-- `PersonalRSS.Infrastructure` — SQLite/EF Core, RSS/Atom ingestion, baseline scoring, and RSS rendering.
-- `PersonalRSS.Web` — minimal ASP.NET Core dashboard and API.
-- `PersonalRSS.Tests` — focused scoring tests.
+## What you can do
 
-Dependency direction: `Web -> Infrastructure -> Application -> Core`.
+- Add feeds individually or import an OPML subscription export.
+- Read inside PersonalRSS using comfortable **Reading**, compact **Scan**, or image-led **Gallery** layouts.
+- Choose **Very interested**, **Interested**, **Not interested**, or **Never this topic** to teach the local preference model.
+- Set one minimum relevance score that follows you between feeds and survives page refreshes.
+- Keep unread state under your control, with optional mark-as-read-on-scroll and explicit per-post or whole-feed actions.
+- Expand the full content supplied by a feed without leaving the page.
+- Subscribe to PersonalRSS's filtered RSS output from another feed reader.
 
-## Run locally
+## How the filtering works
 
-Requires the .NET 8 SDK.
+PersonalRSS starts with a transparent keyword baseline, then learns from the feedback you give. It considers recurring words and phrases in titles and summaries, together with exact author and source matches. Every article keeps its baseline, learned score, manual override, and a readable explanation separate, so a vote can always be undone without losing the score it replaced.
+
+The model is deliberately local and lightweight: no cloud LLM, account, API key, or external preference service is required. It is lexical rather than semantic, so it recognizes recurring language and topics rather than hidden conceptual similarity. The scoring-provider interface still leaves room for optional embeddings or model providers later.
+
+## Quick start
+
+Requires the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0).
 
 ```powershell
 dotnet restore
 dotnet run --project src/PersonalRSS.Web
 ```
 
-Open the address printed by ASP.NET Core. Add one source manually or upload an OPML subscription export from the expandable controls below the source list. Opening the Sources dashboard refreshes every source automatically and reports persistent unread counts at the preview's default minimum score of 0.5, so each badge matches the posts shown when that feed opens. Refreshing and opening a feed do not clear them. The preview separately retains the all-scores unread total for its feed-state actions. Select a feed name to open its readable article cards, use **Mark all unread** or **Mark all read** for the whole feed across every score, and use **Rename** to choose a friendlier display name. **Remove feed** asks for confirmation before permanently deleting that source, its stored articles, and their feedback. SQLite data is stored in `data/personalrss.db` relative to the web application's content directory.
+Open the address printed by ASP.NET Core. Add one source manually or upload an OPML subscription export from **Manage sources**, then select a feed name to start reading. The dashboard refreshes sources automatically without clearing unread state. Use **Mark all unread** or **Mark all read** for a whole feed, and manage names or removal from the feed's own view. SQLite data is stored in `data/personalrss.db` relative to the web application's content directory.
 
 The preview defaults to **Unread**. **All** adds 25 older read posts at a time, with **Load 25 older read posts** for further history. A fresh page load orders unread posts first and sorts each read-state group by relevance and publication date; button presses never reshuffle the current page. Each card's **Unread/Read** control persists an individual override. Manually setting a post unread protects it from scroll-based automatic reading until the user explicitly marks it read, votes on it, or uses **Mark all read**. **Mark all unread** resets every stored article in the feed to normal unread status, so scroll-based reading can resume from the beginning. Posts automatically or manually marked read remain in place for the current page session so reading never makes the list jump.
 
@@ -57,6 +67,16 @@ docker compose up --build
 
 Open <http://localhost:8080>. A named volume persists the database.
 
+## Under the hood
+
+- `PersonalRSS.Core` — domain models with no infrastructure dependencies.
+- `PersonalRSS.Application` — ports and the feed-refresh use case.
+- `PersonalRSS.Infrastructure` — SQLite/EF Core, RSS/Atom ingestion, local scoring, and RSS rendering.
+- `PersonalRSS.Web` — the ASP.NET Core interface and HTTP API.
+- `PersonalRSS.Tests` — focused behavior and scoring tests.
+
+Dependency direction: `Web -> Infrastructure -> Application -> Core`.
+
 ## Initial HTTP surface
 
 | Method | Route | Purpose |
@@ -70,8 +90,11 @@ Open <http://localhost:8080>. A named volume persists the database.
 | `POST` | `/api/feeds/import/opml` | Upload an OPML subscription list |
 | `POST` | `/api/feeds/{id}/refresh` | Fetch and score now |
 | `POST` | `/api/feeds/{id}/viewed` | Mark the feed viewed for unread counting |
+| `POST` | `/api/feeds/{id}/unread` | Mark all stored posts in a feed unread |
 | `GET` | `/api/articles?feedId=&minScore=&limit=` | Inspect scored articles |
-| `POST` | `/api/articles/{id}/feedback` | Store `Interested` or `NotInterested` |
+| `POST` | `/api/articles/{id}/feedback` | Set or clear one of the four feedback choices |
+| `PUT` | `/api/articles/{id}/read-state` | Set one article read or unread |
+| `POST` | `/api/articles/read` | Mark a collection of articles read |
 | `GET` | `/feeds/{slug}.xml?minScore=0.5` | Reader-compatible filtered RSS |
 
 ## MVP boundaries
