@@ -31,6 +31,8 @@ public sealed class SqliteFeedRepositoryTests
             Assert.Equal(1L, await check.ExecuteScalarAsync());
             check.CommandText = "SELECT COUNT(*) FROM pragma_table_info('Articles') WHERE name IN ('ReadAt', 'IsUnreadPinned');";
             Assert.Equal(2L, await check.ExecuteScalarAsync());
+            check.CommandText = "SELECT COUNT(*) FROM pragma_table_info('Articles') WHERE name IN ('AutomaticConfidence', 'MatchingFeedbackCount', 'ConfidenceReason');";
+            Assert.Equal(3L, await check.ExecuteScalarAsync());
             check.CommandText = "SELECT BaselineScore || '|' || AutomaticScore || '|' || BaselineScoreReason || '|' || AutomaticScoreReason FROM Articles WHERE Id = 'article-1';";
             Assert.Equal("0.73|0.73|Legacy score.|Legacy score.", await check.ExecuteScalarAsync());
         }
@@ -73,6 +75,12 @@ public sealed class SqliteFeedRepositoryTests
             Assert.Equal(1, await repository.MarkArticlesReadAsync([articles[0].Id], false, DateTimeOffset.UtcNow));
             Assert.False((await repository.GetUnreadCountsAsync()).ContainsKey(feed.Id));
 
+            Assert.Equal(1, await repository.SetArticlesReadStateAsync([articles[0].Id], true, false, DateTimeOffset.UtcNow));
+            var batchUnread = await repository.GetArticlesAsync(feed.Id, 0, 100);
+            Assert.True(batchUnread.Single(article => article.Id == articles[0].Id).IsUnread);
+            Assert.True(batchUnread.Single(article => article.Id == articles[0].Id).IsUnreadPinned);
+            Assert.Equal(1, await repository.SetArticlesReadStateAsync([articles[0].Id], false, false, DateTimeOffset.UtcNow));
+
             await repository.SetArticleReadStateAsync(articles[1].Id, true, false, DateTimeOffset.UtcNow);
             Assert.True(await repository.MarkFeedViewedAsync(feed.Id, DateTimeOffset.UtcNow));
             Assert.False((await repository.GetUnreadCountsAsync()).ContainsKey(feed.Id));
@@ -113,6 +121,36 @@ public sealed class SqliteFeedRepositoryTests
 
             Assert.Equal(2, allUnread[feed.Id]);
             Assert.Equal(1, visibleUnread[feed.Id]);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task Unread_counts_can_follow_confidence_aware_relevance_bands()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"personalrss-band-unread-test-{Guid.NewGuid():N}.db");
+        try
+        {
+            var options = new DbContextOptionsBuilder<PersonalRssDbContext>().UseSqlite($"Data Source={databasePath}").Options;
+            var repository = new SqliteFeedRepository(new TestContextFactory(options));
+            await repository.InitializeAsync();
+            var feed = new FeedSource { Name = "Test", Slug = "test", Url = "https://example.test/rss" };
+            await repository.AddFeedAsync(feed);
+            var high = Article(feed.Id, "high", DateTimeOffset.UtcNow, 0.8);
+            high.AutomaticConfidence = 0.5;
+            var uncertain = Article(feed.Id, "uncertain", DateTimeOffset.UtcNow, 0.8);
+            uncertain.AutomaticConfidence = 0.49;
+            var filtered = Article(feed.Id, "filtered", DateTimeOffset.UtcNow, 0.2);
+            filtered.AutomaticConfidence = 0.5;
+            await repository.UpsertArticlesAsync([high, uncertain, filtered]);
+
+            Assert.Equal(1, (await repository.GetUnreadCountsByBandAsync(RelevanceBand.High))[feed.Id]);
+            Assert.Equal(1, (await repository.GetUnreadCountsByBandAsync(RelevanceBand.Maybe))[feed.Id]);
+            Assert.Equal(1, (await repository.GetUnreadCountsByBandAsync(RelevanceBand.Filtered))[feed.Id]);
         }
         finally
         {

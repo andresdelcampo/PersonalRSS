@@ -33,12 +33,17 @@ public sealed class Article
     public string? BaselineScoreReason { get; set; }
     public double AutomaticScore { get; set; } = 0.5;
     public string? AutomaticScoreReason { get; set; }
+    public double AutomaticConfidence { get; set; }
+    public int MatchingFeedbackCount { get; set; }
+    public string? ConfidenceReason { get; set; }
     public double Score { get; set; }
     public string? ScoreReason { get; set; }
     [NotMapped]
     public FeedbackKind? ActiveFeedback { get; set; }
     [NotMapped]
     public bool IsUnread { get; set; }
+    [NotMapped]
+    public string RelevanceBand => RelevanceBands.Classify(AutomaticScore, AutomaticConfidence, ActiveFeedback).ToString().ToLowerInvariant();
 }
 
 public sealed class ArticleFeedback
@@ -58,6 +63,29 @@ public enum FeedbackKind
     VeryInterested = 2
 }
 
+public enum RelevanceBand
+{
+    High,
+    Maybe,
+    Filtered
+}
+
+public static class RelevanceBands
+{
+    public const double HighScore = 0.65;
+    public const double FilteredScore = 0.35;
+    public const double RequiredConfidence = 0.50;
+
+    public static RelevanceBand Classify(double automaticScore, double automaticConfidence, FeedbackKind? activeFeedback = null)
+    {
+        if (activeFeedback is FeedbackKind.Interested or FeedbackKind.VeryInterested) return RelevanceBand.High;
+        if (activeFeedback is FeedbackKind.NotInterested or FeedbackKind.NeverThisTopic) return RelevanceBand.Filtered;
+        if (automaticConfidence >= RequiredConfidence && automaticScore >= HighScore) return RelevanceBand.High;
+        if (automaticConfidence >= RequiredConfidence && automaticScore <= FilteredScore) return RelevanceBand.Filtered;
+        return RelevanceBand.Maybe;
+    }
+}
+
 public sealed record ArticleCandidate(
     string ExternalId,
     string Title,
@@ -69,4 +97,11 @@ public sealed record ArticleCandidate(
     string? FeedName = null);
 
 public sealed record FeedbackExample(ArticleCandidate Article, FeedbackKind Kind);
-public sealed record ScoreResult(double Value, string Reason, double? BaselineValue = null, string? BaselineReason = null);
+public sealed record ScoreResult(
+    double Value,
+    string Reason,
+    double? BaselineValue = null,
+    string? BaselineReason = null,
+    double Confidence = 0,
+    int MatchingFeedbackCount = 0,
+    string? ConfidenceReason = null);

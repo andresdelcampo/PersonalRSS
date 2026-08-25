@@ -20,6 +20,9 @@ public sealed class SqliteFeedRepository(IDbContextFactory<PersonalRssDbContext>
             var addedBaselineReason = await EnsureColumnAsync(db, "Articles", "BaselineScoreReason", "TEXT NULL", cancellationToken);
             var addedAutomaticScore = await EnsureColumnAsync(db, "Articles", "AutomaticScore", "REAL NOT NULL DEFAULT 0.5", cancellationToken);
             var addedAutomaticReason = await EnsureColumnAsync(db, "Articles", "AutomaticScoreReason", "TEXT NULL", cancellationToken);
+            await EnsureColumnAsync(db, "Articles", "AutomaticConfidence", "REAL NOT NULL DEFAULT 0", cancellationToken);
+            await EnsureColumnAsync(db, "Articles", "MatchingFeedbackCount", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
+            await EnsureColumnAsync(db, "Articles", "ConfidenceReason", "TEXT NULL", cancellationToken);
             if (addedBaselineScore) await db.Database.ExecuteSqlRawAsync("UPDATE \"Articles\" SET \"BaselineScore\" = \"Score\";", cancellationToken);
             if (addedBaselineReason) await db.Database.ExecuteSqlRawAsync("UPDATE \"Articles\" SET \"BaselineScoreReason\" = \"ScoreReason\";", cancellationToken);
             if (addedAutomaticScore) await db.Database.ExecuteSqlRawAsync("UPDATE \"Articles\" SET \"AutomaticScore\" = \"Score\";", cancellationToken);
@@ -142,6 +145,24 @@ public sealed class SqliteFeedRepository(IDbContextFactory<PersonalRssDbContext>
             .ToDictionary(group => group.Key, group => group.Count());
     }
 
+    public async Task<IReadOnlyDictionary<Guid, int>> GetUnreadCountsByBandAsync(RelevanceBand band, CancellationToken cancellationToken = default)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var viewedAt = await db.Feeds.AsNoTracking().ToDictionaryAsync(x => x.Id, x => x.LastViewedAt, cancellationToken);
+        var articles = await db.Articles.AsNoTracking().ToListAsync(cancellationToken);
+        var articleIds = articles.Select(x => x.Id).ToHashSet();
+        var activeFeedback = (await db.Feedback.AsNoTracking().Where(x => articleIds.Contains(x.ArticleId)).ToListAsync(cancellationToken))
+            .GroupBy(x => x.ArticleId)
+            .ToDictionary(group => group.Key, group => group.OrderByDescending(x => x.CreatedAt).First().Kind);
+        return articles
+            .Where(article => RelevanceBands.Classify(article.AutomaticScore, article.AutomaticConfidence,
+                    activeFeedback.GetValueOrDefault(article.Id)) == band &&
+                viewedAt.TryGetValue(article.FeedSourceId, out var viewed) &&
+                (article.IsUnreadPinned || (article.ReadAt is null && (viewed is null || article.IngestedAt > viewed))))
+            .GroupBy(article => article.FeedSourceId)
+            .ToDictionary(group => group.Key, group => group.Count());
+    }
+
     public async Task<int> UpsertArticlesAsync(IEnumerable<Article> articles, CancellationToken cancellationToken = default)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
@@ -161,6 +182,9 @@ public sealed class SqliteFeedRepository(IDbContextFactory<PersonalRssDbContext>
                 existing.Author = article.Author; existing.PublishedAt = article.PublishedAt;
                 existing.BaselineScore = article.BaselineScore; existing.BaselineScoreReason = article.BaselineScoreReason;
                 existing.AutomaticScore = article.AutomaticScore; existing.AutomaticScoreReason = article.AutomaticScoreReason;
+                existing.AutomaticConfidence = article.AutomaticConfidence;
+                existing.MatchingFeedbackCount = article.MatchingFeedbackCount;
+                existing.ConfidenceReason = article.ConfidenceReason;
                 if (!ratedArticleIds.Contains(existing.Id))
                 {
                     existing.Score = article.Score; existing.ScoreReason = article.ScoreReason;
@@ -212,6 +236,9 @@ public sealed class SqliteFeedRepository(IDbContextFactory<PersonalRssDbContext>
     }
 
     public async Task<int> MarkArticlesReadAsync(IReadOnlyCollection<Guid> articleIds, bool automatic, DateTimeOffset readAt, CancellationToken cancellationToken = default)
+        => await SetArticlesReadStateAsync(articleIds, false, automatic, readAt, cancellationToken);
+
+    public async Task<int> SetArticlesReadStateAsync(IReadOnlyCollection<Guid> articleIds, bool isUnread, bool automatic, DateTimeOffset changedAt, CancellationToken cancellationToken = default)
     {
         if (articleIds.Count == 0) return 0;
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
@@ -220,9 +247,10 @@ public sealed class SqliteFeedRepository(IDbContextFactory<PersonalRssDbContext>
         var changed = 0;
         foreach (var article in articles)
         {
+            if (automatic && isUnread) continue;
             if (automatic && article.IsUnreadPinned) continue;
-            article.ReadAt = readAt;
-            if (!automatic) article.IsUnreadPinned = false;
+            article.ReadAt = isUnread ? null : changedAt;
+            article.IsUnreadPinned = isUnread || (automatic && article.IsUnreadPinned);
             changed++;
         }
         await db.SaveChangesAsync(cancellationToken);

@@ -39,6 +39,9 @@ public sealed class FeedRefreshService(IFeedRepository repository, IFeedFetcher 
                     BaselineScoreReason = score.BaselineReason ?? score.Reason,
                     AutomaticScore = automatic,
                     AutomaticScoreReason = score.Reason,
+                    AutomaticConfidence = Math.Clamp(score.Confidence, 0, 1),
+                    MatchingFeedbackCount = Math.Max(0, score.MatchingFeedbackCount),
+                    ConfidenceReason = score.ConfidenceReason,
                     Score = automatic,
                     ScoreReason = score.Reason
                 });

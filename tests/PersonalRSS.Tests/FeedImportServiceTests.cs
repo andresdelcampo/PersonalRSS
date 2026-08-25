@@ -43,10 +43,12 @@ public sealed class FeedImportServiceTests
         public Task<bool> MarkFeedViewedAsync(Guid id, DateTimeOffset viewedAt, CancellationToken cancellationToken = default) => Task.FromResult(Feeds.Any(feed => feed.Id == id));
         public Task<bool> MarkFeedUnreadAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult(Feeds.Any(feed => feed.Id == id));
         public Task<IReadOnlyDictionary<Guid, int>> GetUnreadCountsAsync(double minimumScore = 0, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyDictionary<Guid, int>>(new Dictionary<Guid, int>());
+        public Task<IReadOnlyDictionary<Guid, int>> GetUnreadCountsByBandAsync(RelevanceBand band, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyDictionary<Guid, int>>(new Dictionary<Guid, int>());
         public Task<int> UpsertArticlesAsync(IEnumerable<Article> articles, CancellationToken cancellationToken = default) => Task.FromResult(0);
         public Task<Article?> GetArticleAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult<Article?>(null);
         public Task<IReadOnlyList<Article>> GetArticlesAsync(Guid? feedId, double minimumScore, int limit, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Article>>([]);
         public Task<bool> SetArticleReadStateAsync(Guid articleId, bool isUnread, bool automatic, DateTimeOffset changedAt, CancellationToken cancellationToken = default) => Task.FromResult(false);
+        public Task<int> SetArticlesReadStateAsync(IReadOnlyCollection<Guid> articleIds, bool isUnread, bool automatic, DateTimeOffset changedAt, CancellationToken cancellationToken = default) => Task.FromResult(0);
         public Task<int> MarkArticlesReadAsync(IReadOnlyCollection<Guid> articleIds, bool automatic, DateTimeOffset readAt, CancellationToken cancellationToken = default) => Task.FromResult(0);
         public Task<IReadOnlyList<FeedbackExample>> GetFeedbackExamplesAsync(Guid? excludingArticleId = null, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<FeedbackExample>>([]);
         public Task SetFeedbackAsync(Guid articleId, FeedbackKind kind, CancellationToken cancellationToken = default) => Task.CompletedTask;
