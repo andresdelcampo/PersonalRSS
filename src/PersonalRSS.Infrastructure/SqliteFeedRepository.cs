@@ -272,6 +272,45 @@ public sealed class SqliteFeedRepository(IDbContextFactory<PersonalRssDbContext>
             item.feedback.Kind)).ToList();
     }
 
+    public async Task<IReadOnlyList<StoredArticleForScoring>> GetArticlesForRescoringAsync(CancellationToken cancellationToken = default)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var rows = await (from article in db.Articles.AsNoTracking()
+                          join feed in db.Feeds.AsNoTracking() on article.FeedSourceId equals feed.Id
+                          select new { article, feed.Name }).ToListAsync(cancellationToken);
+        return rows.Select(item => new StoredArticleForScoring(item.article.Id,
+            new ArticleCandidate(item.article.ExternalId, item.article.Title, item.article.Link, item.article.Summary,
+                item.article.Author, item.article.PublishedAt, item.article.FeedSourceId, item.Name))).ToList();
+    }
+
+    public async Task<int> UpdateAutomaticScoresAsync(IReadOnlyCollection<AutomaticScoreUpdate> updates, CancellationToken cancellationToken = default)
+    {
+        if (updates.Count == 0) return 0;
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var byId = updates.ToDictionary(update => update.ArticleId);
+        var articles = await db.Articles.ToListAsync(cancellationToken);
+        var ratedArticleIds = (await db.Feedback.AsNoTracking().Select(feedback => feedback.ArticleId)
+            .Distinct().ToListAsync(cancellationToken)).ToHashSet();
+        var changed = 0;
+        foreach (var article in articles)
+        {
+            if (!byId.TryGetValue(article.Id, out var update)) continue;
+            article.BaselineScore = update.BaselineScore;
+            article.BaselineScoreReason = update.BaselineReason;
+            article.AutomaticScore = update.AutomaticScore;
+            article.AutomaticScoreReason = update.AutomaticReason;
+            article.AutomaticConfidence = update.Confidence;
+            article.MatchingFeedbackCount = update.MatchingFeedbackCount;
+            article.ConfidenceReason = update.ConfidenceReason;
+            changed++;
+            if (ratedArticleIds.Contains(article.Id)) continue;
+            article.Score = update.AutomaticScore;
+            article.ScoreReason = update.AutomaticReason;
+        }
+        await db.SaveChangesAsync(cancellationToken);
+        return changed;
+    }
+
     public async Task SetFeedbackAsync(Guid articleId, FeedbackKind kind, CancellationToken cancellationToken = default)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);

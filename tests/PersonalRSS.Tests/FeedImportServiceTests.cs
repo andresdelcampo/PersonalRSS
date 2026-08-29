@@ -51,6 +51,8 @@ public sealed class FeedImportServiceTests
         public Task<int> SetArticlesReadStateAsync(IReadOnlyCollection<Guid> articleIds, bool isUnread, bool automatic, DateTimeOffset changedAt, CancellationToken cancellationToken = default) => Task.FromResult(0);
         public Task<int> MarkArticlesReadAsync(IReadOnlyCollection<Guid> articleIds, bool automatic, DateTimeOffset readAt, CancellationToken cancellationToken = default) => Task.FromResult(0);
         public Task<IReadOnlyList<FeedbackExample>> GetFeedbackExamplesAsync(Guid? excludingArticleId = null, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<FeedbackExample>>([]);
+        public Task<IReadOnlyList<StoredArticleForScoring>> GetArticlesForRescoringAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<StoredArticleForScoring>>([]);
+        public Task<int> UpdateAutomaticScoresAsync(IReadOnlyCollection<AutomaticScoreUpdate> updates, CancellationToken cancellationToken = default) => Task.FromResult(updates.Count);
         public Task SetFeedbackAsync(Guid articleId, FeedbackKind kind, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task ClearFeedbackAsync(Guid articleId, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;

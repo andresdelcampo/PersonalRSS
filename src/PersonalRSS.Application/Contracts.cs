@@ -23,6 +23,8 @@ public interface IFeedRepository
     Task<int> SetArticlesReadStateAsync(IReadOnlyCollection<Guid> articleIds, bool isUnread, bool automatic, DateTimeOffset changedAt, CancellationToken cancellationToken = default);
     Task<int> MarkArticlesReadAsync(IReadOnlyCollection<Guid> articleIds, bool automatic, DateTimeOffset readAt, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<FeedbackExample>> GetFeedbackExamplesAsync(Guid? excludingArticleId = null, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<StoredArticleForScoring>> GetArticlesForRescoringAsync(CancellationToken cancellationToken = default);
+    Task<int> UpdateAutomaticScoresAsync(IReadOnlyCollection<AutomaticScoreUpdate> updates, CancellationToken cancellationToken = default);
     Task SetFeedbackAsync(Guid articleId, FeedbackKind kind, CancellationToken cancellationToken = default);
     Task ClearFeedbackAsync(Guid articleId, CancellationToken cancellationToken = default);
     Task InitializeAsync(CancellationToken cancellationToken = default);
@@ -37,3 +39,13 @@ public sealed record SubscriptionCandidate(string Name, string Url, string? Fold
 public sealed record FeedImportIssue(string? Name, string? Url, string Reason);
 public sealed record FeedImportResult(int Added, int Skipped, int Invalid, IReadOnlyList<FeedImportIssue> Issues);
 public sealed record RefreshResult(Guid FeedId, int Fetched, int Stored, int NewPosts, string ScoringProvider);
+public sealed record StoredArticleForScoring(Guid ArticleId, ArticleCandidate Candidate);
+public sealed record AutomaticScoreUpdate(
+    Guid ArticleId,
+    double BaselineScore,
+    string? BaselineReason,
+    double AutomaticScore,
+    string? AutomaticReason,
+    double Confidence,
+    int MatchingFeedbackCount,
+    string? ConfidenceReason);

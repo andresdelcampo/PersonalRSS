@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using PersonalRSS.Application;
 using PersonalRSS.Core;
 using PersonalRSS.Infrastructure;
 
@@ -81,8 +82,8 @@ public sealed class LocalPreferenceScoringProviderTests
             await repository.UpsertArticlesAsync([interested, veryInterested, .. unrelated]);
             await repository.SetFeedbackAsync(interested.Id, FeedbackKind.Interested);
             await repository.SetFeedbackAsync(veryInterested.Id, FeedbackKind.VeryInterested);
-            foreach (var article in unrelated)
-                await repository.SetFeedbackAsync(article.Id, article.Title.GetHashCode() % 2 == 0 ? FeedbackKind.Interested : FeedbackKind.NotInterested);
+            for (var index = 0; index < unrelated.Length; index++)
+                await repository.SetFeedbackAsync(unrelated[index].Id, index % 2 == 0 ? FeedbackKind.Interested : FeedbackKind.NotInterested);
 
             var options = Options.Create(new ScoringOptions
             {
@@ -101,6 +102,154 @@ public sealed class LocalPreferenceScoringProviderTests
             Assert.Contains("GTA 6 +", result.Reason);
             Assert.DoesNotContain(" from for", result.Reason);
             Assert.DoesNotContain(", the", result.Reason);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task Generic_single_words_and_shared_feed_do_not_create_confident_recommendations()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"personalrss-generic-learning-test-{Guid.NewGuid():N}.db");
+        try
+        {
+            var dbOptions = new DbContextOptionsBuilder<PersonalRssDbContext>().UseSqlite($"Data Source={databasePath}").Options;
+            var repository = new SqliteFeedRepository(new TestContextFactory(dbOptions));
+            await repository.InitializeAsync();
+            var feed = new FeedSource { Name = "Hacker News", Slug = "hacker-news", Url = "https://example.test/rss" };
+            await repository.AddFeedAsync(feed);
+            var genericLikes = Enumerable.Range(1, 15).Select(index => Article(feed.Id, $"Useful app news item {index}")).ToArray();
+            await repository.UpsertArticlesAsync(genericLikes);
+            foreach (var article in genericLikes) await repository.SetFeedbackAsync(article.Id, FeedbackKind.Interested);
+
+            var options = Options.Create(new ScoringOptions { BaseScore = 0.5 });
+            var provider = new LocalPreferenceScoringProvider(new KeywordScoringProvider(options), repository, options);
+            var result = await provider.ScoreAsync(new ArticleCandidate(
+                "generic", "It works better in the app", "https://example.test/generic", null, null,
+                DateTimeOffset.UtcNow, feed.Id, feed.Name));
+
+            Assert.Equal(0.5, result.Value);
+            Assert.Equal(0, result.Confidence);
+            Assert.Equal(0, result.MatchingFeedbackCount);
+            Assert.Equal(RelevanceBand.Maybe, RelevanceBands.Classify(result.Value, result.Confidence));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task Feed_metadata_urls_and_counters_are_not_learning_evidence()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"personalrss-metadata-learning-test-{Guid.NewGuid():N}.db");
+        try
+        {
+            var dbOptions = new DbContextOptionsBuilder<PersonalRssDbContext>().UseSqlite($"Data Source={databasePath}").Options;
+            var repository = new SqliteFeedRepository(new TestContextFactory(dbOptions));
+            await repository.InitializeAsync();
+            var feed = new FeedSource { Name = "Hacker News", Slug = "hacker-news", Url = "https://example.test/rss" };
+            await repository.AddFeedAsync(feed);
+            var likes = Enumerable.Range(1, 12).Select(index =>
+            {
+                var article = Article(feed.Id, $"Unrelated liked topic {index}");
+                article.Summary = $"Article URL: https://example.test/{index} Comments URL: https://news.ycombinator.com/item?id={index} Points: 104 # Comments: 37";
+                return article;
+            }).ToArray();
+            await repository.UpsertArticlesAsync(likes);
+            foreach (var article in likes) await repository.SetFeedbackAsync(article.Id, FeedbackKind.Interested);
+
+            var options = Options.Create(new ScoringOptions { BaseScore = 0.5 });
+            var provider = new LocalPreferenceScoringProvider(new KeywordScoringProvider(options), repository, options);
+            var result = await provider.ScoreAsync(new ArticleCandidate(
+                "candidate", "Completely different subject", "https://example.test/candidate",
+                "Article URL: https://other.test/a Comments URL: https://news.ycombinator.com/item?id=999 Points: 104 # Comments: 37",
+                null, DateTimeOffset.UtcNow, feed.Id, feed.Name));
+
+            Assert.Equal(0.5, result.Value);
+            Assert.Equal(0, result.Confidence);
+            Assert.Equal(0, result.MatchingFeedbackCount);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task Repeated_distinctive_topic_can_be_learned_without_an_external_model()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"personalrss-distinctive-learning-test-{Guid.NewGuid():N}.db");
+        try
+        {
+            var dbOptions = new DbContextOptionsBuilder<PersonalRssDbContext>().UseSqlite($"Data Source={databasePath}").Options;
+            var repository = new SqliteFeedRepository(new TestContextFactory(dbOptions));
+            await repository.InitializeAsync();
+            var feed = new FeedSource { Name = "AI", Slug = "ai", Url = "https://example.test/rss" };
+            await repository.AddFeedAsync(feed);
+            var likes = Enumerable.Range(1, 6).Select(index => Article(feed.Id, $"Claude workflow example {index}")).ToArray();
+            var unrelated = Enumerable.Range(1, 24).Select(index => Article(feed.Id, $"Unrelated cooking note {index}")).ToArray();
+            await repository.UpsertArticlesAsync([.. likes, .. unrelated]);
+            foreach (var article in likes) await repository.SetFeedbackAsync(article.Id, FeedbackKind.Interested);
+            foreach (var article in unrelated)
+                await repository.SetFeedbackAsync(article.Id, article.Title.GetHashCode() % 2 == 0 ? FeedbackKind.Interested : FeedbackKind.NotInterested);
+
+            var options = Options.Create(new ScoringOptions { BaseScore = 0.5 });
+            var provider = new LocalPreferenceScoringProvider(new KeywordScoringProvider(options), repository, options);
+            var result = await provider.ScoreAsync(new ArticleCandidate(
+                "claude", "Claude desktop tools", "https://example.test/claude", null, null,
+                DateTimeOffset.UtcNow, feed.Id, feed.Name));
+
+            Assert.True(result.Value >= RelevanceBands.HighScore);
+            Assert.True(result.Confidence >= RelevanceBands.RequiredConfidence);
+            Assert.Equal(6, result.MatchingFeedbackCount);
+            Assert.Equal(RelevanceBand.High, RelevanceBands.Classify(result.Value, result.Confidence));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task Rescoring_updates_stored_predictions_but_preserves_manual_scores()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"personalrss-rescoring-test-{Guid.NewGuid():N}.db");
+        try
+        {
+            var dbOptions = new DbContextOptionsBuilder<PersonalRssDbContext>().UseSqlite($"Data Source={databasePath}").Options;
+            var repository = new SqliteFeedRepository(new TestContextFactory(dbOptions));
+            await repository.InitializeAsync();
+            var feed = new FeedSource { Name = "Retro", Slug = "retro", Url = "https://example.test/rss" };
+            await repository.AddFeedAsync(feed);
+            var examples = Enumerable.Range(1, 3).Select(index => Article(feed.Id, $"Amiga hardware preservation project {index}")).ToArray();
+            var predicted = Article(feed.Id, "New Amiga hardware preservation work");
+            var manual = Article(feed.Id, "Celebrity fashion awards");
+            await repository.UpsertArticlesAsync([.. examples, predicted, manual]);
+            foreach (var article in examples) await repository.SetFeedbackAsync(article.Id, FeedbackKind.VeryInterested);
+            await repository.SetFeedbackAsync(manual.Id, FeedbackKind.NotInterested);
+
+            var options = Options.Create(new ScoringOptions { BaseScore = 0.5 });
+            var provider = new LocalPreferenceScoringProvider(new KeywordScoringProvider(options), repository, options);
+            var service = new PreferenceRescoringService(repository, provider);
+            var updated = await service.RescoreAsync();
+
+            var rescoredPrediction = await repository.GetArticleAsync(predicted.Id);
+            var preservedManual = await repository.GetArticleAsync(manual.Id);
+            Assert.Equal(5, updated);
+            Assert.NotNull(rescoredPrediction);
+            Assert.True(rescoredPrediction.AutomaticScore >= RelevanceBands.HighScore);
+            Assert.True(rescoredPrediction.AutomaticConfidence >= RelevanceBands.RequiredConfidence);
+            Assert.Equal(rescoredPrediction.AutomaticScore, rescoredPrediction.Score);
+            Assert.NotNull(preservedManual);
+            Assert.Equal(0.1, preservedManual.Score);
+            Assert.Contains("not interesting", preservedManual.ScoreReason, StringComparison.OrdinalIgnoreCase);
         }
         finally
         {

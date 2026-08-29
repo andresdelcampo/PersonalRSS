@@ -11,6 +11,7 @@ public sealed class PreferenceLearningOptions
     public double MaximumAdjustment { get; set; } = 0.35;
     public double EvidenceForFullConfidence { get; set; } = 6;
     public double MinimumFeatureAgreement { get; set; } = 0.25;
+    public double MinimumExampleSimilarity { get; set; } = 0.40;
 }
 
 public sealed partial class LocalPreferenceScoringProvider(
@@ -20,13 +21,13 @@ public sealed partial class LocalPreferenceScoringProvider(
 {
     private static readonly HashSet<string> StopWords = new(StringComparer.OrdinalIgnoreCase)
     {
-        "about", "after", "again", "against", "all", "also", "and", "any", "are", "because", "been", "before",
-        "being", "between", "both", "but", "can", "could", "did", "does", "doing", "don", "down", "each", "few",
-        "for", "form", "from", "further", "had", "has", "have", "having", "here", "hers", "him", "his", "how", "into",
-        "its", "itself", "just", "like", "more", "most", "new", "nor", "not", "now", "off", "once", "only",
-        "other", "our", "ours", "out", "over", "own", "same", "she", "should", "some", "such", "than", "that",
-        "the", "their", "theirs", "them", "then", "there", "these", "they", "this", "those", "through", "too",
-        "under", "until", "using", "very", "was", "were", "what", "when", "where", "which", "while", "who",
+        "about", "after", "again", "against", "all", "also", "and", "any", "app", "apps", "are", "article", "articles", "because", "been", "before", "better", "blog",
+        "being", "between", "both", "but", "can", "comment", "comments", "could", "did", "does", "doing", "don", "down", "due", "each", "few", "first",
+        "for", "form", "from", "further", "get", "had", "has", "have", "having", "here", "hers", "him", "his", "how", "important", "into",
+        "highest", "its", "itself", "just", "like", "model", "models", "more", "most", "new", "news", "nor", "not", "now", "off", "once", "only",
+        "other", "our", "ours", "out", "over", "own", "platform", "point", "points", "release", "releases", "remain", "report", "reports", "same", "she", "should", "some", "status", "such", "than", "that",
+        "the", "their", "theirs", "them", "then", "there", "these", "they", "this", "those", "through", "today", "too",
+        "under", "until", "update", "updates", "using", "very", "was", "week", "were", "what", "when", "where", "which", "while", "who", "works",
         "whom", "why", "will", "with", "would", "you", "your", "yours"
     };
 
@@ -36,73 +37,70 @@ public sealed partial class LocalPreferenceScoringProvider(
     public async Task<ScoreResult> ScoreAsync(ArticleCandidate article, CancellationToken cancellationToken = default)
     {
         var examples = await repository.GetFeedbackExamplesAsync(StableId(article), cancellationToken);
-        return await ScoreAsync(article, examples, cancellationToken);
+        return await ScoreAsync(article, Prepare(examples), null, cancellationToken);
     }
 
     public async Task<IReadOnlyList<ScoreResult>> ScoreAsync(IReadOnlyList<ArticleCandidate> articles, CancellationToken cancellationToken = default)
     {
         var examples = await repository.GetFeedbackExamplesAsync(null, cancellationToken);
+        var context = Prepare(examples);
+        var feedbackIndexes = context.Examples.Select((item, index) => (item.Example.Article, Index: index))
+            .Where(item => item.Article.FeedSourceId.HasValue)
+            .ToDictionary(item => (item.Article.FeedSourceId!.Value, item.Article.ExternalId), item => item.Index);
         var results = new List<ScoreResult>(articles.Count);
         foreach (var article in articles)
         {
-            var articleId = StableId(article);
-            var applicableExamples = articleId is null
-                ? examples
-                : examples.Where(example => example.Article.FeedSourceId != article.FeedSourceId || example.Article.ExternalId != article.ExternalId).ToList();
-            results.Add(await ScoreAsync(article, applicableExamples, cancellationToken));
+            int? excludedIndex = null;
+            if (article.FeedSourceId.HasValue && feedbackIndexes.TryGetValue((article.FeedSourceId.Value, article.ExternalId), out var index))
+                excludedIndex = index;
+            results.Add(await ScoreAsync(article, context, excludedIndex, cancellationToken));
         }
         return results;
     }
 
-    private async Task<ScoreResult> ScoreAsync(ArticleCandidate article, IReadOnlyList<FeedbackExample> examples, CancellationToken cancellationToken)
+    private async Task<ScoreResult> ScoreAsync(ArticleCandidate article, LearningContext context, int? excludedIndex, CancellationToken cancellationToken)
     {
         var baseline = await baselineProvider.ScoreAsync(article, cancellationToken);
-        if (examples.Count == 0)
+        var exampleCount = context.Examples.Count - (excludedIndex.HasValue ? 1 : 0);
+        if (exampleCount == 0)
             return new ScoreResult(baseline.Value, $"{baseline.Reason} No personal feedback is available yet.", baseline.Value, baseline.Reason,
                 ConfidenceReason: "Low confidence: no personal feedback is available yet.");
 
         var candidateFeatures = Features(article);
-        var exampleFeatures = examples.Select(example => (Example: example, Features: Features(example.Article))).ToList();
-        var documentFrequency = exampleFeatures
-            .SelectMany(item => item.Features.Keys.Distinct(StringComparer.OrdinalIgnoreCase))
-            .GroupBy(feature => feature, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
         var evidence = new Dictionary<string, FeatureEvidence>(StringComparer.OrdinalIgnoreCase);
         var examplesByFeature = new Dictionary<string, HashSet<int>>(StringComparer.OrdinalIgnoreCase);
-        for (var exampleIndex = 0; exampleIndex < exampleFeatures.Count; exampleIndex++)
+        for (var exampleIndex = 0; exampleIndex < context.Examples.Count; exampleIndex++)
         {
-            var item = exampleFeatures[exampleIndex];
+            if (exampleIndex == excludedIndex) continue;
+            var item = context.Examples[exampleIndex];
             var sharedFeatures = candidateFeatures.Keys.Intersect(item.Features.Keys, StringComparer.OrdinalIgnoreCase).ToArray();
-            var independentFeatures = sharedFeatures
-                .Where(feature => IsMeaningfulIndependentFeature(feature, documentFrequency.GetValueOrDefault(feature), examples.Count))
+            var documentFrequency = sharedFeatures.ToDictionary(feature => feature,
+                feature => AdjustedDocumentFrequency(feature, context, excludedIndex), StringComparer.OrdinalIgnoreCase);
+            var meaningfulFeatures = sharedFeatures
+                .Where(feature => IsMeaningfulIndependentFeature(feature, documentFrequency.GetValueOrDefault(feature), exampleCount))
                 .ToArray();
-            if (independentFeatures.Length == 0) continue;
-            var topicFeatures = independentFeatures
-                .Where(feature => feature.StartsWith("topic:", StringComparison.OrdinalIgnoreCase))
-                .ToArray();
-            var featuresForEvidence = topicFeatures.Length > 0
-                ? topicFeatures
-                : independentFeatures.Concat(sharedFeatures.Where(feature => feature.StartsWith("source:", StringComparison.OrdinalIgnoreCase)));
-            var weightedFeatures = featuresForEvidence
-                .Distinct(StringComparer.OrdinalIgnoreCase)
+            var selectedFeatures = SelectEvidenceFeatures(meaningfulFeatures, documentFrequency);
+            if (selectedFeatures.Length == 0) continue;
+            var weightedFeatures = selectedFeatures
                 .Select(feature =>
                 {
                     var frequency = Math.Max(1, documentFrequency.GetValueOrDefault(feature));
-                    var specificity = 1 + Math.Log((examples.Count + 1d) / (frequency + 1d));
-                    var sourceScale = feature.StartsWith("source:", StringComparison.OrdinalIgnoreCase) ? 0.25 : 1;
-                    var strength = candidateFeatures[feature].Weight * item.Features[feature].Weight * specificity * sourceScale;
+                    var specificity = 1 + Math.Log((exampleCount + 1d) / (frequency + 1d));
+                    var strength = candidateFeatures[feature].Weight * item.Features[feature].Weight * specificity;
                     return (Feature: feature, Strength: strength);
                 })
                 .Where(match => match.Strength > 0)
                 .ToArray();
             var totalStrength = weightedFeatures.Sum(match => match.Strength);
             if (totalStrength <= 0) continue;
+            var similarity = ExampleSimilarity(selectedFeatures, totalStrength, documentFrequency);
+            if (similarity < _learning.MinimumExampleSimilarity) continue;
             var feedbackWeight = (int)item.Example.Kind;
             var voteMagnitude = Math.Abs(feedbackWeight);
             var voteDirection = Math.Sign(feedbackWeight);
             foreach (var match in weightedFeatures)
             {
-                var contribution = voteDirection * voteMagnitude * (match.Strength / totalStrength);
+                var contribution = voteDirection * voteMagnitude * similarity * (match.Strength / totalStrength);
                 if (!evidence.TryGetValue(match.Feature, out var current)) current = new FeatureEvidence(candidateFeatures[match.Feature].Label, 0, 0);
                 evidence[match.Feature] = current with { Signed = current.Signed + contribution, Absolute = current.Absolute + Math.Abs(contribution) };
                 if (!examplesByFeature.TryGetValue(match.Feature, out var featureExamples))
@@ -152,6 +150,22 @@ public sealed partial class LocalPreferenceScoringProvider(
         return new ScoreResult(score, reason, baseline.Value, baseline.Reason, confidence, matchingExamples, confidenceReason);
     }
 
+    private static LearningContext Prepare(IReadOnlyList<FeedbackExample> examples)
+    {
+        var prepared = examples.Select(example => new PreparedFeedbackExample(example, Features(example.Article))).ToList();
+        var documentFrequency = prepared.SelectMany(item => item.Features.Keys.Distinct(StringComparer.OrdinalIgnoreCase))
+            .GroupBy(feature => feature, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
+        return new LearningContext(prepared, documentFrequency);
+    }
+
+    private static int AdjustedDocumentFrequency(string feature, LearningContext context, int? excludedIndex)
+    {
+        var frequency = context.DocumentFrequency.GetValueOrDefault(feature);
+        if (excludedIndex.HasValue && context.Examples[excludedIndex.Value].Features.ContainsKey(feature)) frequency--;
+        return Math.Max(0, frequency);
+    }
+
     private static Guid? StableId(ArticleCandidate article)
     {
         if (article.FeedSourceId is null) return null;
@@ -168,7 +182,6 @@ public sealed partial class LocalPreferenceScoringProvider(
         AddText(result, summary, 0.7, includeBigrams: true);
         AddKnownTopics(result, $"{title} {summary}");
         AddExact(result, article.Author, "author", 1.25);
-        AddExact(result, article.FeedName, "source", 1.1);
         return result;
     }
 
@@ -176,7 +189,7 @@ public sealed partial class LocalPreferenceScoringProvider(
     {
         var separated = AlphaNumericBoundary().Replace(value ?? string.Empty, " ");
         var words = Words().Matches(separated).Select(match => match.Value.ToLowerInvariant())
-            .Where(word => (word.Length >= 3 || word.All(char.IsDigit)) && !StopWords.Contains(word)).Take(80).ToArray();
+            .Where(word => word.Length >= 3 && !word.All(char.IsDigit) && !StopWords.Contains(word)).Take(80).ToArray();
         foreach (var word in words.Distinct(StringComparer.OrdinalIgnoreCase))
             if (word.Length >= 3) AddFeature(features, $"term:{word}", new Feature(word, weight));
         if (!includeBigrams) return;
@@ -195,10 +208,40 @@ public sealed partial class LocalPreferenceScoringProvider(
     private static bool IsMeaningfulIndependentFeature(string feature, int documentFrequency, int exampleCount)
     {
         if (feature.StartsWith("topic:", StringComparison.OrdinalIgnoreCase) || feature.StartsWith("author:", StringComparison.OrdinalIgnoreCase)) return true;
-        if (feature.StartsWith("source:", StringComparison.OrdinalIgnoreCase)) return false;
-        var maximumShare = feature.StartsWith("phrase:", StringComparison.OrdinalIgnoreCase) ? 0.20 : 0.10;
-        var maximumFrequency = Math.Max(8, (int)Math.Ceiling(exampleCount * maximumShare));
+        var isPhrase = feature.StartsWith("phrase:", StringComparison.OrdinalIgnoreCase);
+        var maximumShare = isPhrase ? 0.15 : 0.05;
+        var minimumFrequencyAllowance = isPhrase ? 5 : 6;
+        var maximumFrequency = Math.Max(minimumFrequencyAllowance, (int)Math.Ceiling(exampleCount * maximumShare));
         return documentFrequency <= maximumFrequency;
+    }
+
+    private static string[] SelectEvidenceFeatures(IReadOnlyCollection<string> features, IReadOnlyDictionary<string, int> documentFrequency)
+    {
+        var topics = features.Where(feature => feature.StartsWith("topic:", StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (topics.Length > 0) return topics;
+        var phrases = features.Where(feature => feature.StartsWith("phrase:", StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (phrases.Length > 0) return phrases;
+        var authors = features.Where(feature => feature.StartsWith("author:", StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (authors.Length > 0) return authors;
+        var terms = features.Where(feature => feature.StartsWith("term:", StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (terms.Length >= 2) return terms;
+        if (terms.Length == 1)
+        {
+            var value = terms[0]["term:".Length..];
+            if (value.Length >= 6 && documentFrequency.GetValueOrDefault(terms[0]) >= 2) return terms;
+        }
+        return [];
+    }
+
+    private static double ExampleSimilarity(IReadOnlyCollection<string> features, double totalStrength, IReadOnlyDictionary<string, int> documentFrequency)
+    {
+        if (features.Any(feature => feature.StartsWith("topic:", StringComparison.OrdinalIgnoreCase))) return 1;
+        if (features.Any(feature => feature.StartsWith("author:", StringComparison.OrdinalIgnoreCase))) return 0.8;
+        if (features.Any(feature => feature.StartsWith("phrase:", StringComparison.OrdinalIgnoreCase)))
+            return Math.Clamp(1 - Math.Exp(-totalStrength / 4), 0, 0.9);
+        if (features.Count >= 2) return Math.Clamp(1 - Math.Exp(-totalStrength / 6), 0, 0.85);
+        var repeatedExamples = documentFrequency.GetValueOrDefault(features.Single());
+        return Math.Clamp(0.45 + 0.05 * Math.Min(3, repeatedExamples - 1), 0, 0.60);
     }
 
     private static void AddExact(IDictionary<string, Feature> features, string? value, string prefix, double weight)
@@ -213,7 +256,13 @@ public sealed partial class LocalPreferenceScoringProvider(
         if (!features.TryGetValue(key, out var existing) || feature.Weight > existing.Weight) features[key] = feature;
     }
 
-    private static string? StripHtml(string? value) => value is null ? null : HtmlTags().Replace(WebUtility.HtmlDecode(value), " ");
+    private static string? StripHtml(string? value)
+    {
+        if (value is null) return null;
+        var text = HtmlTags().Replace(WebUtility.HtmlDecode(value), " ");
+        text = FeedMetadata().Replace(text, " ");
+        return Urls().Replace(text, " ");
+    }
 
     [GeneratedRegex(@"[\p{L}\p{N}][\p{L}\p{N}+#.-]*", RegexOptions.CultureInvariant)]
     private static partial Regex Words();
@@ -227,6 +276,14 @@ public sealed partial class LocalPreferenceScoringProvider(
     [GeneratedRegex("<[^>]+>", RegexOptions.CultureInvariant)]
     private static partial Regex HtmlTags();
 
+    [GeneratedRegex(@"(?:article|comments?)\s+url\s*:\s*\S+|points?\s*:\s*\d+|#\s*comments?\s*:\s*\d+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex FeedMetadata();
+
+    [GeneratedRegex(@"(?:https?://|www\.)\S+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex Urls();
+
     private sealed record Feature(string Label, double Weight);
     private sealed record FeatureEvidence(string Label, double Signed, double Absolute);
+    private sealed record PreparedFeedbackExample(FeedbackExample Example, Dictionary<string, Feature> Features);
+    private sealed record LearningContext(IReadOnlyList<PreparedFeedbackExample> Examples, IReadOnlyDictionary<string, int> DocumentFrequency);
 }

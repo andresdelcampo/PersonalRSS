@@ -20,6 +20,7 @@ public static class ServiceCollectionExtensions
         services.AddHttpClient<IFeedFetcher, HttpFeedFetcher>(client => { client.Timeout = TimeSpan.FromSeconds(30); client.DefaultRequestHeaders.UserAgent.ParseAdd("PersonalRSS/0.1"); });
         services.AddScoped<FeedRefreshService>();
         services.AddScoped<FeedImportService>();
+        services.AddScoped<PreferenceRescoringService>();
         return services;
     }
 }
