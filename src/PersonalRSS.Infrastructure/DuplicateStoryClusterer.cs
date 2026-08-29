@@ -11,7 +11,9 @@ internal sealed record StoryFeedbackCluster(
 
 internal static partial class DuplicateStoryClusterer
 {
-    public static IReadOnlyList<StoryFeedbackCluster> Collapse(IReadOnlyList<FeedbackExample> examples)
+    public static IReadOnlyList<StoryFeedbackCluster> Collapse(
+        IReadOnlyList<FeedbackExample> examples,
+        CancellationToken cancellationToken = default)
     {
         if (examples.Count == 0) return [];
 
@@ -19,6 +21,7 @@ internal static partial class DuplicateStoryClusterer
         var parents = Enumerable.Range(0, examples.Count).ToArray();
         for (var left = 0; left < examples.Count; left++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             for (var right = left + 1; right < examples.Count; right++)
             {
                 if (SameStory(descriptions[left], descriptions[right])) Union(parents, left, right);

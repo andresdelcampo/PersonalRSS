@@ -41,18 +41,19 @@ public sealed partial class LocalPreferenceScoringProvider(
     public async Task<ScoreResult> ScoreAsync(ArticleCandidate article, CancellationToken cancellationToken = default)
     {
         var examples = await repository.GetFeedbackExamplesAsync(StableId(article), cancellationToken);
-        return await ScoreAsync(article, Prepare(examples), null, cancellationToken);
+        return await ScoreAsync(article, Prepare(examples, cancellationToken), null, cancellationToken);
     }
 
     public async Task<IReadOnlyList<ScoreResult>> ScoreAsync(IReadOnlyList<ArticleCandidate> articles, CancellationToken cancellationToken = default)
     {
         var examples = await repository.GetFeedbackExamplesAsync(null, cancellationToken);
-        var context = Prepare(examples);
+        var context = Prepare(examples, cancellationToken);
         var feedbackIndexes = context.Examples.SelectMany((item, index) => item.MemberKeys.Select(key => (Key: key, Index: index)))
             .ToDictionary(item => item.Key, item => item.Index);
         var results = new List<ScoreResult>(articles.Count);
         foreach (var article in articles)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             int? excludedIndex = null;
             if (article.FeedSourceId.HasValue && feedbackIndexes.TryGetValue((article.FeedSourceId.Value, article.ExternalId), out var index))
                 excludedIndex = index;
@@ -74,6 +75,7 @@ public sealed partial class LocalPreferenceScoringProvider(
         var examplesByFeature = new Dictionary<string, HashSet<int>>(StringComparer.OrdinalIgnoreCase);
         for (var exampleIndex = 0; exampleIndex < context.Examples.Count; exampleIndex++)
         {
+            if ((exampleIndex & 31) == 0) cancellationToken.ThrowIfCancellationRequested();
             if (exampleIndex == excludedIndex) continue;
             var item = context.Examples[exampleIndex];
             var sharedFeatures = candidateFeatures.Keys.Intersect(item.Features.Keys, StringComparer.OrdinalIgnoreCase).ToArray();
@@ -153,9 +155,9 @@ public sealed partial class LocalPreferenceScoringProvider(
         return new ScoreResult(score, reason, baseline.Value, baseline.Reason, confidence, matchingExamples, confidenceReason);
     }
 
-    private static LearningContext Prepare(IReadOnlyList<FeedbackExample> examples)
+    private static LearningContext Prepare(IReadOnlyList<FeedbackExample> examples, CancellationToken cancellationToken)
     {
-        var prepared = DuplicateStoryClusterer.Collapse(examples)
+        var prepared = DuplicateStoryClusterer.Collapse(examples, cancellationToken)
             .Select(cluster => new PreparedFeedbackExample(
                 cluster.Representative,
                 Features(cluster.Representative.Article),

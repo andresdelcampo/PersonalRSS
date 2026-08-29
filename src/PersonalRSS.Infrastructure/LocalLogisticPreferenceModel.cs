@@ -50,9 +50,12 @@ internal sealed class PrecisionModelContext
 
 internal static class PrecisionModelTrainer
 {
-    public static PrecisionModelContext Build(IReadOnlyList<FeedbackExample> feedback, PreferenceLearningOptions options)
+    public static PrecisionModelContext Build(
+        IReadOnlyList<FeedbackExample> feedback,
+        PreferenceLearningOptions options,
+        CancellationToken cancellationToken = default)
     {
-        var clusters = DuplicateStoryClusterer.Collapse(feedback);
+        var clusters = DuplicateStoryClusterer.Collapse(feedback, cancellationToken);
         if (clusters.Count < options.MinimumCalibrationExamples)
             return PrecisionModelContext.NotReady(feedback.Count, clusters.Count);
 
@@ -60,10 +63,11 @@ internal static class PrecisionModelTrainer
         var crossFitted = new Dictionary<string, double>(StringComparer.Ordinal);
         for (var fold = 0; fold < folds; fold++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var training = clusters.Where(cluster => Fold(cluster.StableKey, folds) != fold).ToArray();
             var validation = clusters.Where(cluster => Fold(cluster.StableKey, folds) == fold).ToArray();
             if (validation.Length == 0) continue;
-            var model = LocalLogisticPreferenceModel.Train(training);
+            var model = LocalLogisticPreferenceModel.Train(training, cancellationToken);
             foreach (var cluster in validation) crossFitted[cluster.StableKey] = model.Predict(cluster.Representative.Article).Probability;
         }
 
@@ -83,7 +87,7 @@ internal static class PrecisionModelTrainer
                 memberPredictions[(member.Article.FeedSourceId!.Value, member.Article.ExternalId)] = item.Probability;
         }
         return new PrecisionModelContext(
-            LocalLogisticPreferenceModel.Train(clusters),
+            LocalLogisticPreferenceModel.Train(clusters, cancellationToken),
             memberPredictions,
             positiveCutoff,
             negativeCutoff,
@@ -136,7 +140,9 @@ internal sealed class LocalLogisticPreferenceModel
         _bias = bias;
     }
 
-    public static LocalLogisticPreferenceModel Train(IReadOnlyList<StoryFeedbackCluster> clusters)
+    public static LocalLogisticPreferenceModel Train(
+        IReadOnlyList<StoryFeedbackCluster> clusters,
+        CancellationToken cancellationToken = default)
     {
         var raw = clusters.Select(cluster => LocalPreferenceScoringProvider.LogisticFeatures(cluster.Representative.Article)).ToArray();
         var documentFrequency = raw.SelectMany(features => features.Keys.Distinct(StringComparer.OrdinalIgnoreCase))
@@ -163,6 +169,7 @@ internal sealed class LocalLogisticPreferenceModel
         var totalSampleWeight = Math.Max(1, samples.Sum(sample => sample.SampleWeight));
         for (var epoch = 0; epoch < 180; epoch++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             Array.Clear(gradient);
             var biasGradient = 0d;
             foreach (var sample in samples)

@@ -42,7 +42,7 @@ public sealed class PrecisionEnsembleScoringProvider(
         try
         {
             if (_cachedContext is not null && string.Equals(_cachedFingerprint, fingerprint, StringComparison.Ordinal)) return _cachedContext;
-            var context = PrecisionModelTrainer.Build(feedback, _learning);
+            var context = PrecisionModelTrainer.Build(feedback, _learning, cancellationToken);
             _cachedContext = context;
             _cachedFingerprint = fingerprint;
             return context;

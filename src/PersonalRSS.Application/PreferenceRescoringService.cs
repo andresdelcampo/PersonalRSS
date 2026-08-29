@@ -15,6 +15,7 @@ public sealed class PreferenceRescoringService(IFeedRepository repository, IScor
         var updates = new List<AutomaticScoreUpdate>(stored.Count);
         for (var index = 0; index < stored.Count; index++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var score = scores[index];
             updates.Add(new AutomaticScoreUpdate(
                 stored[index].ArticleId,
