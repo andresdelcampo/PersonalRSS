@@ -196,8 +196,8 @@ public sealed class LocalPreferenceScoringProviderTests
             var unrelated = Enumerable.Range(1, 24).Select(index => Article(feed.Id, $"Unrelated cooking note {index}")).ToArray();
             await repository.UpsertArticlesAsync([.. likes, .. unrelated]);
             foreach (var article in likes) await repository.SetFeedbackAsync(article.Id, FeedbackKind.Interested);
-            foreach (var article in unrelated)
-                await repository.SetFeedbackAsync(article.Id, article.Title.GetHashCode() % 2 == 0 ? FeedbackKind.Interested : FeedbackKind.NotInterested);
+            for (var index = 0; index < unrelated.Length; index++)
+                await repository.SetFeedbackAsync(unrelated[index].Id, index % 2 == 0 ? FeedbackKind.Interested : FeedbackKind.NotInterested);
 
             var options = Options.Create(new ScoringOptions { BaseScore = 0.5 });
             var provider = new LocalPreferenceScoringProvider(new KeywordScoringProvider(options), repository, options);
@@ -209,6 +209,105 @@ public sealed class LocalPreferenceScoringProviderTests
             Assert.True(result.Confidence >= RelevanceBands.RequiredConfidence);
             Assert.Equal(6, result.MatchingFeedbackCount);
             Assert.Equal(RelevanceBand.High, RelevanceBands.Classify(result.Value, result.Confidence));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task Duplicate_story_feedback_counts_once()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"personalrss-duplicate-learning-test-{Guid.NewGuid():N}.db");
+        try
+        {
+            var dbOptions = new DbContextOptionsBuilder<PersonalRssDbContext>().UseSqlite($"Data Source={databasePath}").Options;
+            var repository = new SqliteFeedRepository(new TestContextFactory(dbOptions));
+            await repository.InitializeAsync();
+            var firstFeed = new FeedSource { Name = "First", Slug = "first", Url = "https://first.test/rss" };
+            var secondFeed = new FeedSource { Name = "Second", Slug = "second", Url = "https://second.test/rss" };
+            await repository.AddFeedAsync(firstFeed);
+            await repository.AddFeedAsync(secondFeed);
+            var first = Article(firstFeed.Id, "Amiga FPGA restoration project");
+            var second = Article(secondFeed.Id, "Amiga FPGA restoration project");
+            first.Link = "https://stories.test/amiga-fpga?utm_source=first";
+            second.Link = "https://stories.test/amiga-fpga?utm_source=second";
+            await repository.UpsertArticlesAsync([first, second]);
+            await repository.SetFeedbackAsync(first.Id, FeedbackKind.VeryInterested);
+            await repository.SetFeedbackAsync(second.Id, FeedbackKind.VeryInterested);
+
+            var options = Options.Create(new ScoringOptions { BaseScore = 0.5 });
+            var provider = new LocalPreferenceScoringProvider(new KeywordScoringProvider(options), repository, options);
+            var result = await provider.ScoreAsync(new ArticleCandidate(
+                "candidate", "New Amiga FPGA restoration project", "https://other.test/amiga", null, null,
+                DateTimeOffset.UtcNow, firstFeed.Id, firstFeed.Name));
+
+            Assert.Equal(1, result.MatchingFeedbackCount);
+            Assert.True(result.Confidence < RelevanceBands.RequiredConfidence);
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task Precision_ensemble_requires_calibrated_classifier_agreement()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"personalrss-ensemble-learning-test-{Guid.NewGuid():N}.db");
+        try
+        {
+            var dbOptions = new DbContextOptionsBuilder<PersonalRssDbContext>().UseSqlite($"Data Source={databasePath}").Options;
+            var repository = new SqliteFeedRepository(new TestContextFactory(dbOptions));
+            await repository.InitializeAsync();
+            var feed = new FeedSource { Name = "Mixed", Slug = "mixed", Url = "https://example.test/rss" };
+            await repository.AddFeedAsync(feed);
+            var positives = Enumerable.Range(1, 9).Select(index => Article(feed.Id, $"Amiga hardware restoration diary {index}")).ToArray();
+            var negatives = Enumerable.Range(1, 9).Select(index => Article(feed.Id, $"Celebrity fashion awards roundup {index}")).ToArray();
+            var unrelated = Enumerable.Range(1, 52).Select(index => Article(feed.Id, $"Distinct unrelated subject number {index} token{index}")).ToArray();
+            await repository.UpsertArticlesAsync([.. positives, .. negatives, .. unrelated]);
+            foreach (var article in positives) await repository.SetFeedbackAsync(article.Id, FeedbackKind.VeryInterested);
+            foreach (var article in negatives) await repository.SetFeedbackAsync(article.Id, FeedbackKind.NeverThisTopic);
+            for (var index = 0; index < unrelated.Length; index++)
+                await repository.SetFeedbackAsync(unrelated[index].Id, index % 2 == 0 ? FeedbackKind.Interested : FeedbackKind.NotInterested);
+
+            var options = Options.Create(new ScoringOptions
+            {
+                BaseScore = 0.5,
+                PreferenceLearning = new PreferenceLearningOptions
+                {
+                    MinimumCalibrationExamples = 20,
+                    MinimumCalibratedPredictions = 8,
+                    TargetPrecision = 0.85
+                }
+            });
+            var heuristic = new LocalPreferenceScoringProvider(new KeywordScoringProvider(options), repository, options);
+            var provider = new PrecisionEnsembleScoringProvider(heuristic, repository, options);
+            var positive = await provider.ScoreAsync(new ArticleCandidate(
+                "positive", "Amiga hardware restoration continues", "https://example.test/amiga-new", null, null,
+                DateTimeOffset.UtcNow, feed.Id, feed.Name));
+            var negative = await provider.ScoreAsync(new ArticleCandidate(
+                "negative", "Celebrity fashion awards return", "https://example.test/fashion-new", null, null,
+                DateTimeOffset.UtcNow, feed.Id, feed.Name));
+            var unrelatedCandidate = await provider.ScoreAsync(new ArticleCandidate(
+                "unrelated", "An entirely unseen gardening subject", "https://example.test/garden", null, null,
+                DateTimeOffset.UtcNow, feed.Id, feed.Name));
+            var heldOut = (await provider.ScoreAsync([
+                new ArticleCandidate(
+                    positives[0].ExternalId, positives[0].Title, positives[0].Link, positives[0].Summary, positives[0].Author,
+                    positives[0].PublishedAt, positives[0].FeedSourceId, feed.Name)
+            ])).Single();
+
+            Assert.Equal(RelevanceBand.High, RelevanceBands.Classify(positive.Value, positive.Confidence));
+            Assert.Contains("Precision ensemble agrees", positive.Reason);
+            Assert.Equal(RelevanceBand.Filtered, RelevanceBands.Classify(negative.Value, negative.Confidence));
+            Assert.Contains("Precision ensemble agrees", negative.Reason);
+            Assert.Equal(RelevanceBand.Maybe, RelevanceBands.Classify(unrelatedCandidate.Value, unrelatedCandidate.Confidence));
+            Assert.Contains("Both local models must agree", unrelatedCandidate.Reason);
+            Assert.Contains("held-out feedback story", heldOut.Reason);
         }
         finally
         {

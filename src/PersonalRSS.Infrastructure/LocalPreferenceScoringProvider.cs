@@ -12,6 +12,10 @@ public sealed class PreferenceLearningOptions
     public double EvidenceForFullConfidence { get; set; } = 6;
     public double MinimumFeatureAgreement { get; set; } = 0.25;
     public double MinimumExampleSimilarity { get; set; } = 0.40;
+    public int MinimumCalibrationExamples { get; set; } = 20;
+    public int CalibrationFolds { get; set; } = 5;
+    public int MinimumCalibratedPredictions { get; set; } = 8;
+    public double TargetPrecision { get; set; } = 0.85;
 }
 
 public sealed partial class LocalPreferenceScoringProvider(
@@ -44,9 +48,8 @@ public sealed partial class LocalPreferenceScoringProvider(
     {
         var examples = await repository.GetFeedbackExamplesAsync(null, cancellationToken);
         var context = Prepare(examples);
-        var feedbackIndexes = context.Examples.Select((item, index) => (item.Example.Article, Index: index))
-            .Where(item => item.Article.FeedSourceId.HasValue)
-            .ToDictionary(item => (item.Article.FeedSourceId!.Value, item.Article.ExternalId), item => item.Index);
+        var feedbackIndexes = context.Examples.SelectMany((item, index) => item.MemberKeys.Select(key => (Key: key, Index: index)))
+            .ToDictionary(item => item.Key, item => item.Index);
         var results = new List<ScoreResult>(articles.Count);
         foreach (var article in articles)
         {
@@ -152,11 +155,18 @@ public sealed partial class LocalPreferenceScoringProvider(
 
     private static LearningContext Prepare(IReadOnlyList<FeedbackExample> examples)
     {
-        var prepared = examples.Select(example => new PreparedFeedbackExample(example, Features(example.Article))).ToList();
+        var prepared = DuplicateStoryClusterer.Collapse(examples)
+            .Select(cluster => new PreparedFeedbackExample(
+                cluster.Representative,
+                Features(cluster.Representative.Article),
+                cluster.Members.Where(member => member.Article.FeedSourceId.HasValue)
+                    .Select(member => (member.Article.FeedSourceId!.Value, member.Article.ExternalId))
+                    .ToHashSet()))
+            .ToList();
         var documentFrequency = prepared.SelectMany(item => item.Features.Keys.Distinct(StringComparer.OrdinalIgnoreCase))
             .GroupBy(feature => feature, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
-        return new LearningContext(prepared, documentFrequency);
+        return new LearningContext(prepared, documentFrequency, examples.Count);
     }
 
     private static int AdjustedDocumentFrequency(string feature, LearningContext context, int? excludedIndex)
@@ -184,6 +194,9 @@ public sealed partial class LocalPreferenceScoringProvider(
         AddExact(result, article.Author, "author", 1.25);
         return result;
     }
+
+    internal static IReadOnlyDictionary<string, double> LogisticFeatures(ArticleCandidate article) =>
+        Features(article).ToDictionary(item => item.Key, item => item.Value.Weight, StringComparer.OrdinalIgnoreCase);
 
     private static void AddText(IDictionary<string, Feature> features, string? value, double weight, bool includeBigrams)
     {
@@ -284,6 +297,12 @@ public sealed partial class LocalPreferenceScoringProvider(
 
     private sealed record Feature(string Label, double Weight);
     private sealed record FeatureEvidence(string Label, double Signed, double Absolute);
-    private sealed record PreparedFeedbackExample(FeedbackExample Example, Dictionary<string, Feature> Features);
-    private sealed record LearningContext(IReadOnlyList<PreparedFeedbackExample> Examples, IReadOnlyDictionary<string, int> DocumentFrequency);
+    private sealed record PreparedFeedbackExample(
+        FeedbackExample Example,
+        Dictionary<string, Feature> Features,
+        IReadOnlySet<(Guid FeedSourceId, string ExternalId)> MemberKeys);
+    private sealed record LearningContext(
+        IReadOnlyList<PreparedFeedbackExample> Examples,
+        IReadOnlyDictionary<string, int> DocumentFrequency,
+        int OriginalFeedbackCount);
 }

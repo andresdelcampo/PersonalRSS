@@ -14,7 +14,8 @@ public static class ServiceCollectionExtensions
         services.AddPooledDbContextFactory<PersonalRssDbContext>(options => options.UseSqlite(connectionString));
         services.AddSingleton<IFeedRepository, SqliteFeedRepository>();
         services.AddSingleton<KeywordScoringProvider>();
-        services.AddSingleton<IScoringProvider, LocalPreferenceScoringProvider>();
+        services.AddSingleton<LocalPreferenceScoringProvider>();
+        services.AddSingleton<IScoringProvider, PrecisionEnsembleScoringProvider>();
         services.AddSingleton<IFilteredFeedRenderer, RssFeedRenderer>();
         services.AddSingleton<ISubscriptionListParser, OpmlSubscriptionListParser>();
         services.AddHttpClient<IFeedFetcher, HttpFeedFetcher>(client => { client.Timeout = TimeSpan.FromSeconds(30); client.DefaultRequestHeaders.UserAgent.ParseAdd("PersonalRSS/0.1"); });
