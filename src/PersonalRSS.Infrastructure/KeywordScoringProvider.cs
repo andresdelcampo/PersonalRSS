@@ -25,7 +25,12 @@ public sealed class KeywordScoringProvider(IOptions<ScoringOptions> options) : I
         var positive = _options.PositiveKeywords.Count(keyword => Contains(text, keyword));
         var negative = _options.NegativeKeywords.Count(keyword => Contains(text, keyword));
         var value = Math.Clamp(_options.BaseScore + (positive - negative) * _options.KeywordWeight, 0, 1);
-        return Task.FromResult(new ScoreResult(value, $"Baseline {_options.BaseScore:0.00}; {positive} positive and {negative} negative keyword matches."));
+        var hasConfiguredKeywords = _options.PositiveKeywords.Any(keyword => !string.IsNullOrWhiteSpace(keyword)) ||
+                                    _options.NegativeKeywords.Any(keyword => !string.IsNullOrWhiteSpace(keyword));
+        var reason = hasConfiguredKeywords
+            ? $"User keyword starting score {_options.BaseScore:0.00}; {positive} positive and {negative} negative keyword matches."
+            : "No user-defined keyword preferences are configured.";
+        return Task.FromResult(new ScoreResult(value, reason));
     }
 
     private static bool Contains(string text, string keyword) => !string.IsNullOrWhiteSpace(keyword) && text.Contains(keyword, StringComparison.OrdinalIgnoreCase);

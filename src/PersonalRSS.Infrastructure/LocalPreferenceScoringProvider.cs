@@ -10,12 +10,13 @@ public sealed class PreferenceLearningOptions
 {
     public double MaximumAdjustment { get; set; } = 0.35;
     public double EvidenceForFullConfidence { get; set; } = 6;
-    public double MinimumFeatureAgreement { get; set; } = 0.25;
+    public double MinimumFeatureAgreement { get; set; } = 0.50;
     public double MinimumExampleSimilarity { get; set; } = 0.40;
     public int MinimumCalibrationExamples { get; set; } = 20;
     public int CalibrationFolds { get; set; } = 5;
     public int MinimumCalibratedPredictions { get; set; } = 8;
-    public double TargetPrecision { get; set; } = 0.85;
+    public double TargetPrecision { get; set; } = 0.90;
+    public double MinimumFeatureLogOdds { get; set; } = 0.35;
 }
 
 public sealed partial class LocalPreferenceScoringProvider(
@@ -140,6 +141,8 @@ public sealed partial class LocalPreferenceScoringProvider(
         var matchingExamples = matchingExampleIndexes.Length;
         var totalSigned = coherentEvidence.Values.Sum(item => item.Signed);
         var totalEvidence = coherentEvidence.Values.Sum(item => item.Absolute);
+        var positiveEvidence = coherentEvidence.Values.Sum(item => (item.Absolute + item.Signed) / 2);
+        var negativeEvidence = coherentEvidence.Values.Sum(item => (item.Absolute - item.Signed) / 2);
         var polarity = totalEvidence == 0 ? 0 : totalSigned / totalEvidence;
         var agreement = totalEvidence == 0 ? 0 : Math.Abs(totalSigned) / totalEvidence;
         var support = Math.Min(1, totalEvidence / Math.Max(1, _learning.EvidenceForFullConfidence));
@@ -149,10 +152,11 @@ public sealed partial class LocalPreferenceScoringProvider(
         var strongest = coherentEvidence.Values.OrderByDescending(item => Math.Abs(item.Signed)).Take(3)
             .Select(item => $"{item.Label} {(item.Signed >= 0 ? "+" : string.Empty)}{item.Signed:0.00}").ToArray();
         var direction = adjustment >= 0 ? "+" : string.Empty;
-        var reason = $"{baseline.Reason} Personal model {direction}{adjustment:0.00} from {string.Join(", ", strongest)} using {matchingExamples} matching feedback choice{(matchingExamples == 1 ? string.Empty : "s")}.";
+        var reason = $"{baseline.Reason} Personal model {direction}{adjustment:0.00} from {string.Join(", ", strongest)} using {matchingExamples} contributing rated stor{(matchingExamples == 1 ? "y" : "ies")}.";
         var confidenceLabel = confidence >= 0.75 ? "High" : confidence >= RelevanceBands.RequiredConfidence ? "Medium" : "Low";
-        var confidenceReason = $"{confidenceLabel} confidence ({confidence:0.00}): {matchingExamples} meaningful matching feedback choice{(matchingExamples == 1 ? string.Empty : "s")}, {totalEvidence:0.0} weighted evidence, {agreement:P0} agreement.";
-        return new ScoreResult(score, reason, baseline.Value, baseline.Reason, confidence, matchingExamples, confidenceReason);
+        var confidenceReason = $"{confidenceLabel} confidence ({confidence:0.00}): {positiveEvidence:0.0} positive versus {negativeEvidence:0.0} negative weighted evidence, {agreement:P0} directional agreement across {matchingExamples} contributing rated stor{(matchingExamples == 1 ? "y" : "ies")}.";
+        return new ScoreResult(score, reason, baseline.Value, baseline.Reason, confidence, matchingExamples, confidenceReason,
+            positiveEvidence, negativeEvidence);
     }
 
     private static LearningContext Prepare(IReadOnlyList<FeedbackExample> examples, CancellationToken cancellationToken)

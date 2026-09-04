@@ -9,6 +9,39 @@ namespace PersonalRSS.Tests;
 public sealed class LocalPreferenceScoringProviderTests
 {
     [Fact]
+    public async Task Explicit_avoided_topic_rule_overrides_automatic_model_and_uses_phrase_boundaries()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"personalrss-explicit-topic-test-{Guid.NewGuid():N}.db");
+        try
+        {
+            var dbOptions = new DbContextOptionsBuilder<PersonalRssDbContext>().UseSqlite($"Data Source={databasePath}").Options;
+            var repository = new SqliteFeedRepository(new TestContextFactory(dbOptions));
+            await repository.InitializeAsync();
+            await repository.AddAvoidedTopicRuleAsync("AI");
+            var options = Options.Create(new ScoringOptions { BaseScore = 0.5 });
+            var heuristic = new LocalPreferenceScoringProvider(new KeywordScoringProvider(options), repository, options);
+            var provider = new PrecisionEnsembleScoringProvider(heuristic, repository, options);
+
+            var matched = await provider.ScoreAsync(new ArticleCandidate(
+                "matched", "A practical AI assistant", "https://example.test/ai", null, null, DateTimeOffset.UtcNow));
+            var boundaryMiss = await provider.ScoreAsync(new ArticleCandidate(
+                "miss", "Rail travel guide", "https://example.test/rail", null, null, DateTimeOffset.UtcNow));
+
+            Assert.Equal(0, matched.Value);
+            Assert.Equal(1, matched.Confidence);
+            Assert.Equal(RelevanceBand.Filtered, RelevanceBands.Classify(matched.Value, matched.Confidence));
+            Assert.Contains("explicit avoided topic \u201cAI\u201d", matched.Reason);
+            Assert.Equal(0.5, boundaryMiss.Value);
+            Assert.Equal(RelevanceBand.Maybe, RelevanceBands.Classify(boundaryMiss.Value, boundaryMiss.Confidence));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+        }
+    }
+
+    [Fact]
     public async Task Related_positive_and_negative_feedback_changes_future_scores_with_explanations()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"personalrss-learning-test-{Guid.NewGuid():N}.db");
@@ -35,8 +68,10 @@ public sealed class LocalPreferenceScoringProviderTests
             Assert.Equal(0.5, relatedLike.BaselineValue);
             Assert.Contains("Personal model +", relatedLike.Reason);
             Assert.Contains("Personal model -", relatedDislike.Reason);
-            Assert.Contains("matching feedback choice", relatedLike.Reason);
+            Assert.Contains("contributing rated story", relatedLike.Reason);
             Assert.Equal(1, relatedLike.MatchingFeedbackCount);
+            Assert.True(relatedLike.PositiveEvidence > relatedLike.NegativeEvidence);
+            Assert.True(relatedDislike.NegativeEvidence > relatedDislike.PositiveEvidence);
             Assert.InRange(relatedLike.Confidence, 0.01, 0.49);
             Assert.Contains("Low confidence", relatedLike.ConfidenceReason);
         }
@@ -255,7 +290,51 @@ public sealed class LocalPreferenceScoringProviderTests
     }
 
     [Fact]
-    public async Task Precision_ensemble_requires_calibrated_classifier_agreement()
+    public async Task Class_balancing_keeps_an_unseen_featureless_article_neutral()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"personalrss-balanced-learning-test-{Guid.NewGuid():N}.db");
+        try
+        {
+            var dbOptions = new DbContextOptionsBuilder<PersonalRssDbContext>().UseSqlite($"Data Source={databasePath}").Options;
+            var repository = new SqliteFeedRepository(new TestContextFactory(dbOptions));
+            await repository.InitializeAsync();
+            var feed = new FeedSource { Name = "Mixed", Slug = "mixed", Url = "https://example.test/rss" };
+            await repository.AddFeedAsync(feed);
+            var positives = Enumerable.Range(1, 30).Select(_ => FeaturelessArticle(feed.Id)).ToArray();
+            var negatives = Enumerable.Range(1, 20).Select(_ => FeaturelessArticle(feed.Id)).ToArray();
+            await repository.UpsertArticlesAsync([.. positives, .. negatives]);
+            foreach (var article in positives) await repository.SetFeedbackAsync(article.Id, FeedbackKind.Interested);
+            foreach (var article in negatives) await repository.SetFeedbackAsync(article.Id, FeedbackKind.NotInterested);
+
+            var options = Options.Create(new ScoringOptions
+            {
+                PreferenceLearning = new PreferenceLearningOptions
+                {
+                    MinimumCalibrationExamples = 20,
+                    MinimumCalibratedPredictions = 8,
+                    TargetPrecision = 0.90
+                }
+            });
+            var heuristic = new LocalPreferenceScoringProvider(new KeywordScoringProvider(options), repository, options);
+            var provider = new PrecisionEnsembleScoringProvider(heuristic, repository, options);
+
+            var result = await provider.ScoreAsync(new ArticleCandidate(
+                "unseen", string.Empty, "https://example.test/unseen", null, null,
+                DateTimeOffset.UtcNow, feed.Id, feed.Name));
+
+            Assert.Equal(0.5, result.Value, precision: 5);
+            Assert.Equal(0, result.Confidence);
+            Assert.Equal(RelevanceBand.Maybe, RelevanceBands.Classify(result.Value, result.Confidence));
+        }
+        finally
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task Precision_ensemble_uses_calibrated_combined_predictions()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"personalrss-ensemble-learning-test-{Guid.NewGuid():N}.db");
         try
@@ -287,10 +366,10 @@ public sealed class LocalPreferenceScoringProviderTests
             var heuristic = new LocalPreferenceScoringProvider(new KeywordScoringProvider(options), repository, options);
             var provider = new PrecisionEnsembleScoringProvider(heuristic, repository, options);
             var positive = await provider.ScoreAsync(new ArticleCandidate(
-                "positive", "Amiga hardware restoration continues", "https://example.test/amiga-new", null, null,
+                "positive", "Amiga hardware restoration diary", "https://example.test/amiga-new", null, null,
                 DateTimeOffset.UtcNow, feed.Id, feed.Name));
             var negative = await provider.ScoreAsync(new ArticleCandidate(
-                "negative", "Celebrity fashion awards return", "https://example.test/fashion-new", null, null,
+                "negative", "Celebrity fashion awards roundup", "https://example.test/fashion-new", null, null,
                 DateTimeOffset.UtcNow, feed.Id, feed.Name));
             var unrelatedCandidate = await provider.ScoreAsync(new ArticleCandidate(
                 "unrelated", "An entirely unseen gardening subject", "https://example.test/garden", null, null,
@@ -302,11 +381,11 @@ public sealed class LocalPreferenceScoringProviderTests
             ])).Single();
 
             Assert.Equal(RelevanceBand.High, RelevanceBands.Classify(positive.Value, positive.Confidence));
-            Assert.Contains("Precision ensemble agrees", positive.Reason);
+            Assert.Contains("Calibrated combined model", positive.Reason);
             Assert.Equal(RelevanceBand.Filtered, RelevanceBands.Classify(negative.Value, negative.Confidence));
-            Assert.Contains("Precision ensemble agrees", negative.Reason);
+            Assert.Contains("Calibrated combined model", negative.Reason);
             Assert.Equal(RelevanceBand.Maybe, RelevanceBands.Classify(unrelatedCandidate.Value, unrelatedCandidate.Confidence));
-            Assert.Contains("Both local models must agree", unrelatedCandidate.Reason);
+            Assert.Contains("did not reach either calibrated precision cutoff", unrelatedCandidate.Reason);
             Assert.Contains("held-out feedback story", heldOut.Reason);
         }
         finally
@@ -345,6 +424,7 @@ public sealed class LocalPreferenceScoringProviderTests
             Assert.NotNull(rescoredPrediction);
             Assert.True(rescoredPrediction.AutomaticScore >= RelevanceBands.HighScore);
             Assert.True(rescoredPrediction.AutomaticConfidence >= RelevanceBands.RequiredConfidence);
+            Assert.True(rescoredPrediction.PositiveEvidence > rescoredPrediction.NegativeEvidence);
             Assert.Equal(rescoredPrediction.AutomaticScore, rescoredPrediction.Score);
             Assert.NotNull(preservedManual);
             Assert.Equal(0.1, preservedManual.Score);
@@ -372,6 +452,13 @@ public sealed class LocalPreferenceScoringProviderTests
         Score = 0.5,
         ScoreReason = "Baseline."
     };
+
+    private static Article FeaturelessArticle(Guid feedId)
+    {
+        var article = Article(feedId, Guid.NewGuid().ToString("N"));
+        article.Title = string.Empty;
+        return article;
+    }
 
     private sealed class TestContextFactory(DbContextOptions<PersonalRssDbContext> options) : IDbContextFactory<PersonalRssDbContext>
     {

@@ -35,6 +35,8 @@ public sealed class Article
     public string? AutomaticScoreReason { get; set; }
     public double AutomaticConfidence { get; set; }
     public int MatchingFeedbackCount { get; set; }
+    public double PositiveEvidence { get; set; }
+    public double NegativeEvidence { get; set; }
     public string? ConfidenceReason { get; set; }
     public double Score { get; set; }
     public string? ScoreReason { get; set; }
@@ -42,6 +44,15 @@ public sealed class Article
     public FeedbackKind? ActiveFeedback { get; set; }
     [NotMapped]
     public bool IsUnread { get; set; }
+    [NotMapped]
+    public double EvidenceAgreement
+    {
+        get
+        {
+            var total = PositiveEvidence + NegativeEvidence;
+            return total <= 0 ? 0 : Math.Abs(PositiveEvidence - NegativeEvidence) / total;
+        }
+    }
     [NotMapped]
     public string RelevanceBand => RelevanceBands.Classify(AutomaticScore, AutomaticConfidence, ActiveFeedback).ToString().ToLowerInvariant();
 }
@@ -52,6 +63,14 @@ public sealed class ArticleFeedback
     public Guid ArticleId { get; set; }
     public Article? Article { get; set; }
     public FeedbackKind Kind { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public sealed class AvoidedTopicRule
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public required string Phrase { get; set; }
+    public required string NormalizedPhrase { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
@@ -104,4 +123,6 @@ public sealed record ScoreResult(
     string? BaselineReason = null,
     double Confidence = 0,
     int MatchingFeedbackCount = 0,
-    string? ConfidenceReason = null);
+    string? ConfidenceReason = null,
+    double PositiveEvidence = 0,
+    double NegativeEvidence = 0);

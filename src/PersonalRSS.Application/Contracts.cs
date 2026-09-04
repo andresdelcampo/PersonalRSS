@@ -27,6 +27,10 @@ public interface IFeedRepository
     Task<int> UpdateAutomaticScoresAsync(IReadOnlyCollection<AutomaticScoreUpdate> updates, CancellationToken cancellationToken = default);
     Task SetFeedbackAsync(Guid articleId, FeedbackKind kind, CancellationToken cancellationToken = default);
     Task ClearFeedbackAsync(Guid articleId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<AvoidedTopicRule>> GetAvoidedTopicRulesAsync(CancellationToken cancellationToken = default);
+    Task<AvoidedTopicRule> AddAvoidedTopicRuleAsync(string phrase, CancellationToken cancellationToken = default);
+    Task<AvoidedTopicRule?> UpdateAvoidedTopicRuleAsync(Guid id, string phrase, CancellationToken cancellationToken = default);
+    Task<bool> DeleteAvoidedTopicRuleAsync(Guid id, CancellationToken cancellationToken = default);
     Task InitializeAsync(CancellationToken cancellationToken = default);
 }
 
@@ -48,4 +52,6 @@ public sealed record AutomaticScoreUpdate(
     string? AutomaticReason,
     double Confidence,
     int MatchingFeedbackCount,
+    double PositiveEvidence,
+    double NegativeEvidence,
     string? ConfidenceReason);

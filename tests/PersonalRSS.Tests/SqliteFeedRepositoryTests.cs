@@ -8,6 +8,36 @@ namespace PersonalRSS.Tests;
 public sealed class SqliteFeedRepositoryTests
 {
     [Fact]
+    public async Task Avoided_topic_rules_are_normalized_editable_and_removable()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"personalrss-topic-rules-test-{Guid.NewGuid():N}.db");
+        try
+        {
+            var options = new DbContextOptionsBuilder<PersonalRssDbContext>().UseSqlite($"Data Source={databasePath}").Options;
+            var repository = new SqliteFeedRepository(new TestContextFactory(options));
+            await repository.InitializeAsync();
+
+            var first = await repository.AddAvoidedTopicRuleAsync("  Virtual   reality  ");
+            var duplicate = await repository.AddAvoidedTopicRuleAsync("virtual reality");
+            var updated = await repository.UpdateAvoidedTopicRuleAsync(first.Id, "VR headsets");
+
+            Assert.Equal(first.Id, duplicate.Id);
+            Assert.NotNull(updated);
+            Assert.Equal("VR headsets", updated.Phrase);
+            Assert.Equal("vr headsets", updated.NormalizedPhrase);
+            Assert.Single(await repository.GetAvoidedTopicRulesAsync());
+            Assert.True(await repository.DeleteAvoidedTopicRuleAsync(first.Id));
+            Assert.False(await repository.DeleteAvoidedTopicRuleAsync(first.Id));
+            Assert.Empty(await repository.GetAvoidedTopicRulesAsync());
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+        }
+    }
+
+    [Fact]
     public async Task Initialize_adds_last_viewed_column_to_an_existing_database()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"personalrss-legacy-test-{Guid.NewGuid():N}.db");
@@ -31,8 +61,8 @@ public sealed class SqliteFeedRepositoryTests
             Assert.Equal(1L, await check.ExecuteScalarAsync());
             check.CommandText = "SELECT COUNT(*) FROM pragma_table_info('Articles') WHERE name IN ('ReadAt', 'IsUnreadPinned');";
             Assert.Equal(2L, await check.ExecuteScalarAsync());
-            check.CommandText = "SELECT COUNT(*) FROM pragma_table_info('Articles') WHERE name IN ('AutomaticConfidence', 'MatchingFeedbackCount', 'ConfidenceReason');";
-            Assert.Equal(3L, await check.ExecuteScalarAsync());
+            check.CommandText = "SELECT COUNT(*) FROM pragma_table_info('Articles') WHERE name IN ('AutomaticConfidence', 'MatchingFeedbackCount', 'PositiveEvidence', 'NegativeEvidence', 'ConfidenceReason');";
+            Assert.Equal(5L, await check.ExecuteScalarAsync());
             check.CommandText = "SELECT BaselineScore || '|' || AutomaticScore || '|' || BaselineScoreReason || '|' || AutomaticScoreReason FROM Articles WHERE Id = 'article-1';";
             Assert.Equal("0.73|0.73|Legacy score.|Legacy score.", await check.ExecuteScalarAsync());
         }

@@ -22,7 +22,8 @@ public sealed class PrecisionEnsembleScoringProvider(
     {
         var heuristic = await heuristicProvider.ScoreAsync(article, cancellationToken);
         var feedback = await repository.GetFeedbackExamplesAsync(null, cancellationToken);
-        return Combine(article, heuristic, await ModelContextAsync(feedback, cancellationToken));
+        var result = Combine(article, heuristic, await ModelContextAsync(feedback, cancellationToken));
+        return ApplyAvoidedTopicRules(article, result, await repository.GetAvoidedTopicRulesAsync(cancellationToken));
     }
 
     public async Task<IReadOnlyList<ScoreResult>> ScoreAsync(
@@ -32,7 +33,22 @@ public sealed class PrecisionEnsembleScoringProvider(
         var heuristic = await heuristicProvider.ScoreAsync(articles, cancellationToken);
         var feedback = await repository.GetFeedbackExamplesAsync(null, cancellationToken);
         var context = await ModelContextAsync(feedback, cancellationToken);
-        return articles.Select((article, index) => Combine(article, heuristic[index], context)).ToArray();
+        var rules = await repository.GetAvoidedTopicRulesAsync(cancellationToken);
+        return articles.Select((article, index) => ApplyAvoidedTopicRules(article, Combine(article, heuristic[index], context), rules)).ToArray();
+    }
+
+    private static ScoreResult ApplyAvoidedTopicRules(ArticleCandidate article, ScoreResult result, IReadOnlyList<AvoidedTopicRule> rules)
+    {
+        var match = rules.OrderByDescending(rule => rule.NormalizedPhrase.Length)
+            .FirstOrDefault(rule => AvoidedTopicText.Matches(article, rule));
+        if (match is null) return result;
+        return result with
+        {
+            Value = 0,
+            Reason = $"Matched your explicit avoided topic \u201c{match.Phrase}\u201d. {result.Reason}",
+            Confidence = 1,
+            ConfidenceReason = "Certain automatic decision (1.00): an explicit avoided-topic rule matched this article. The rule overrides, but does not erase, the learned evidence shown for inspection."
+        };
     }
 
     private async Task<PrecisionModelContext> ModelContextAsync(IReadOnlyList<FeedbackExample> feedback, CancellationToken cancellationToken)
@@ -42,7 +58,9 @@ public sealed class PrecisionEnsembleScoringProvider(
         try
         {
             if (_cachedContext is not null && string.Equals(_cachedFingerprint, fingerprint, StringComparison.Ordinal)) return _cachedContext;
-            var context = PrecisionModelTrainer.Build(feedback, _learning, cancellationToken);
+            var heldOutHeuristics = await heuristicProvider.ScoreAsync(
+                feedback.Select(item => item.Article).ToArray(), cancellationToken);
+            var context = PrecisionModelTrainer.Build(feedback, heldOutHeuristics, _learning, cancellationToken);
             _cachedContext = context;
             _cachedFingerprint = fingerprint;
             return context;
@@ -72,9 +90,9 @@ public sealed class PrecisionEnsembleScoringProvider(
         if (!context.IsReady) return heuristic;
 
         var prediction = context.Predict(article);
-        var heuristicBand = RelevanceBands.Classify(heuristic.Value, heuristic.Confidence);
-        var positiveVote = context.PositiveCutoff.IsAvailable && prediction.Probability >= context.PositiveCutoff.Threshold;
-        var negativeVote = context.NegativeCutoff.IsAvailable && prediction.Probability <= context.NegativeCutoff.Threshold;
+        var combinedProbability = PrecisionModelTrainer.CombinedProbability(heuristic.Value, prediction.Probability);
+        var positiveVote = context.PositiveCutoff.IsAvailable && combinedProbability >= context.PositiveCutoff.Threshold;
+        var negativeVote = context.NegativeCutoff.IsAvailable && combinedProbability <= context.NegativeCutoff.Threshold;
         var features = prediction.StrongestFeatures.Count == 0
             ? "no reusable classifier features"
             : string.Join(", ", prediction.StrongestFeatures);
@@ -82,32 +100,31 @@ public sealed class PrecisionEnsembleScoringProvider(
             ? $"{context.UniqueStoryCount} unique feedback stories"
             : $"{context.UniqueStoryCount} unique stories after collapsing {context.OriginalFeedbackCount - context.UniqueStoryCount} duplicate feedback item(s)";
 
-        if (heuristicBand == RelevanceBand.High && positiveVote)
+        if (positiveVote)
         {
-            var score = Math.Max(RelevanceBands.HighScore, (heuristic.Value + prediction.Probability) / 2);
-            var confidence = Math.Clamp(Math.Min(heuristic.Confidence, context.PositiveCutoff.Precision), RelevanceBands.RequiredConfidence, 1);
-            var reason = $"{heuristic.Reason} Precision ensemble agrees: classifier {prediction.Probability:P0} positive from {features}; " +
-                         $"cutoff {context.PositiveCutoff.Threshold:P0} achieved {context.PositiveCutoff.Precision:P0} cross-fitted precision on {context.PositiveCutoff.Predictions} held-out stories.";
-            var confidenceReason = $"High-precision agreement ({confidence:0.00}) between the similarity scorer and local classifier, calibrated from {duplicateSummary}.";
+            var score = Math.Max(RelevanceBands.HighScore, combinedProbability);
+            var confidence = Math.Clamp(context.PositiveCutoff.Precision, RelevanceBands.RequiredConfidence, 1);
+            var reason = $"{heuristic.Reason} Calibrated combined model: similarity {heuristic.Value:P0}, classifier {prediction.Probability:P0} positive from {features}; " +
+                         $"combined cutoff {context.PositiveCutoff.Threshold:P0} achieved {context.PositiveCutoff.Precision:P0} cross-fitted precision on {context.PositiveCutoff.Predictions} held-out stories.";
+            var confidenceReason = $"Calibrated positive decision ({confidence:0.00}) from the combined local prediction, trained on {duplicateSummary}.";
             return heuristic with { Value = score, Reason = reason, Confidence = confidence, ConfidenceReason = confidenceReason };
         }
 
-        if (heuristicBand == RelevanceBand.Filtered && negativeVote)
+        if (negativeVote)
         {
-            var score = Math.Min(RelevanceBands.FilteredScore, (heuristic.Value + prediction.Probability) / 2);
-            var confidence = Math.Clamp(Math.Min(heuristic.Confidence, context.NegativeCutoff.Precision), RelevanceBands.RequiredConfidence, 1);
-            var reason = $"{heuristic.Reason} Precision ensemble agrees: classifier {prediction.Probability:P0} negative from {features}; " +
-                         $"cutoff {context.NegativeCutoff.Threshold:P0} achieved {context.NegativeCutoff.Precision:P0} cross-fitted precision on {context.NegativeCutoff.Predictions} held-out stories.";
-            var confidenceReason = $"High-precision agreement ({confidence:0.00}) between the similarity scorer and local classifier, calibrated from {duplicateSummary}.";
+            var score = Math.Min(RelevanceBands.FilteredScore, combinedProbability);
+            var confidence = Math.Clamp(context.NegativeCutoff.Precision, RelevanceBands.RequiredConfidence, 1);
+            var reason = $"{heuristic.Reason} Calibrated combined model: similarity {heuristic.Value:P0}, classifier {prediction.Probability:P0} negative from {features}; " +
+                         $"combined cutoff {context.NegativeCutoff.Threshold:P0} achieved {context.NegativeCutoff.Precision:P0} cross-fitted precision on {context.NegativeCutoff.Predictions} held-out stories.";
+            var confidenceReason = $"Calibrated negative decision ({confidence:0.00}) from the combined local prediction, trained on {duplicateSummary}.";
             return heuristic with { Value = score, Reason = reason, Confidence = confidence, ConfidenceReason = confidenceReason };
         }
 
-        var classifierVote = positiveVote ? "positive" : negativeVote ? "negative" : "uncertain";
-        var maybeScore = Math.Clamp((heuristic.Value + prediction.Probability) / 2, RelevanceBands.FilteredScore + 0.01, RelevanceBands.HighScore - 0.01);
+        var maybeScore = Math.Clamp(combinedProbability, RelevanceBands.FilteredScore + 0.01, RelevanceBands.HighScore - 0.01);
         var maybeConfidence = Math.Min(heuristic.Confidence, RelevanceBands.RequiredConfidence - 0.01);
-        var maybeReason = $"{heuristic.Reason} Precision ensemble held this in Maybe: similarity vote {heuristicBand.ToString().ToLowerInvariant()}, " +
-                          $"classifier {prediction.Probability:P0} ({classifierVote}; {features}). Both local models must agree before automatic High or Filtered.";
-        var maybeConfidenceReason = $"Conservative disagreement ({maybeConfidence:0.00}); thresholds were cross-fitted from {duplicateSummary}.";
+        var maybeReason = $"{heuristic.Reason} Combined model held this in Maybe: similarity {heuristic.Value:P0}, " +
+                          $"classifier {prediction.Probability:P0} from {features}, combined {combinedProbability:P0}; it did not reach either calibrated precision cutoff.";
+        var maybeConfidenceReason = $"Uncertain combined prediction ({maybeConfidence:0.00}); decision cutoffs were cross-fitted from {duplicateSummary}.";
         return heuristic with { Value = maybeScore, Reason = maybeReason, Confidence = maybeConfidence, ConfidenceReason = maybeConfidenceReason };
     }
 }

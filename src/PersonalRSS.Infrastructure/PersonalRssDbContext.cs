@@ -8,6 +8,7 @@ public sealed class PersonalRssDbContext(DbContextOptions<PersonalRssDbContext> 
     public DbSet<FeedSource> Feeds => Set<FeedSource>();
     public DbSet<Article> Articles => Set<Article>();
     public DbSet<ArticleFeedback> Feedback => Set<ArticleFeedback>();
+    public DbSet<AvoidedTopicRule> AvoidedTopicRules => Set<AvoidedTopicRule>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -33,6 +34,13 @@ public sealed class PersonalRssDbContext(DbContextOptions<PersonalRssDbContext> 
         {
             entity.HasKey(x => x.Id);
             entity.HasOne(x => x.Article).WithMany().HasForeignKey(x => x.ArticleId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<AvoidedTopicRule>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => x.NormalizedPhrase).IsUnique();
+            entity.Property(x => x.Phrase).HasMaxLength(120);
+            entity.Property(x => x.NormalizedPhrase).HasMaxLength(120);
         });
     }
 }

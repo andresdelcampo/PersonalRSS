@@ -22,7 +22,18 @@ public sealed class SqliteFeedRepository(IDbContextFactory<PersonalRssDbContext>
             var addedAutomaticReason = await EnsureColumnAsync(db, "Articles", "AutomaticScoreReason", "TEXT NULL", cancellationToken);
             await EnsureColumnAsync(db, "Articles", "AutomaticConfidence", "REAL NOT NULL DEFAULT 0", cancellationToken);
             await EnsureColumnAsync(db, "Articles", "MatchingFeedbackCount", "INTEGER NOT NULL DEFAULT 0", cancellationToken);
+            await EnsureColumnAsync(db, "Articles", "PositiveEvidence", "REAL NOT NULL DEFAULT 0", cancellationToken);
+            await EnsureColumnAsync(db, "Articles", "NegativeEvidence", "REAL NOT NULL DEFAULT 0", cancellationToken);
             await EnsureColumnAsync(db, "Articles", "ConfidenceReason", "TEXT NULL", cancellationToken);
+            await db.Database.ExecuteSqlRawAsync("""
+                CREATE TABLE IF NOT EXISTS "AvoidedTopicRules" (
+                    "Id" TEXT NOT NULL CONSTRAINT "PK_AvoidedTopicRules" PRIMARY KEY,
+                    "Phrase" TEXT NOT NULL,
+                    "NormalizedPhrase" TEXT NOT NULL,
+                    "CreatedAt" TEXT NOT NULL
+                );
+                """, cancellationToken);
+            await db.Database.ExecuteSqlRawAsync("CREATE UNIQUE INDEX IF NOT EXISTS \"IX_AvoidedTopicRules_NormalizedPhrase\" ON \"AvoidedTopicRules\" (\"NormalizedPhrase\");", cancellationToken);
             if (addedBaselineScore) await db.Database.ExecuteSqlRawAsync("UPDATE \"Articles\" SET \"BaselineScore\" = \"Score\";", cancellationToken);
             if (addedBaselineReason) await db.Database.ExecuteSqlRawAsync("UPDATE \"Articles\" SET \"BaselineScoreReason\" = \"ScoreReason\";", cancellationToken);
             if (addedAutomaticScore) await db.Database.ExecuteSqlRawAsync("UPDATE \"Articles\" SET \"AutomaticScore\" = \"Score\";", cancellationToken);
@@ -184,6 +195,8 @@ public sealed class SqliteFeedRepository(IDbContextFactory<PersonalRssDbContext>
                 existing.AutomaticScore = article.AutomaticScore; existing.AutomaticScoreReason = article.AutomaticScoreReason;
                 existing.AutomaticConfidence = article.AutomaticConfidence;
                 existing.MatchingFeedbackCount = article.MatchingFeedbackCount;
+                existing.PositiveEvidence = article.PositiveEvidence;
+                existing.NegativeEvidence = article.NegativeEvidence;
                 existing.ConfidenceReason = article.ConfidenceReason;
                 if (!ratedArticleIds.Contains(existing.Id))
                 {
@@ -301,6 +314,8 @@ public sealed class SqliteFeedRepository(IDbContextFactory<PersonalRssDbContext>
             article.AutomaticScoreReason = update.AutomaticReason;
             article.AutomaticConfidence = update.Confidence;
             article.MatchingFeedbackCount = update.MatchingFeedbackCount;
+            article.PositiveEvidence = update.PositiveEvidence;
+            article.NegativeEvidence = update.NegativeEvidence;
             article.ConfidenceReason = update.ConfidenceReason;
             changed++;
             if (ratedArticleIds.Contains(article.Id)) continue;
@@ -348,5 +363,51 @@ public sealed class SqliteFeedRepository(IDbContextFactory<PersonalRssDbContext>
         article.Score = article.AutomaticScore;
         article.ScoreReason = article.AutomaticScoreReason;
         await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<AvoidedTopicRule>> GetAvoidedTopicRulesAsync(CancellationToken cancellationToken = default)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        return await db.AvoidedTopicRules.AsNoTracking().OrderBy(rule => rule.Phrase).ToListAsync(cancellationToken);
+    }
+
+    public async Task<AvoidedTopicRule> AddAvoidedTopicRuleAsync(string phrase, CancellationToken cancellationToken = default)
+    {
+        var displayPhrase = AvoidedTopicText.PrepareDisplayPhrase(phrase);
+        var normalizedPhrase = AvoidedTopicText.Normalize(displayPhrase);
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var existing = await db.AvoidedTopicRules.AsNoTracking()
+            .SingleOrDefaultAsync(rule => rule.NormalizedPhrase == normalizedPhrase, cancellationToken);
+        if (existing is not null) return existing;
+        var rule = new AvoidedTopicRule { Phrase = displayPhrase, NormalizedPhrase = normalizedPhrase };
+        db.AvoidedTopicRules.Add(rule);
+        await db.SaveChangesAsync(cancellationToken);
+        return rule;
+    }
+
+    public async Task<AvoidedTopicRule?> UpdateAvoidedTopicRuleAsync(Guid id, string phrase, CancellationToken cancellationToken = default)
+    {
+        var displayPhrase = AvoidedTopicText.PrepareDisplayPhrase(phrase);
+        var normalizedPhrase = AvoidedTopicText.Normalize(displayPhrase);
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var rule = await db.AvoidedTopicRules.SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
+        if (rule is null) return null;
+        var duplicate = await db.AvoidedTopicRules.AsNoTracking()
+            .AnyAsync(item => item.Id != id && item.NormalizedPhrase == normalizedPhrase, cancellationToken);
+        if (duplicate) throw new InvalidOperationException("That avoided topic already exists.");
+        rule.Phrase = displayPhrase;
+        rule.NormalizedPhrase = normalizedPhrase;
+        await db.SaveChangesAsync(cancellationToken);
+        return rule;
+    }
+
+    public async Task<bool> DeleteAvoidedTopicRuleAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var rule = await db.AvoidedTopicRules.SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
+        if (rule is null) return false;
+        db.AvoidedTopicRules.Remove(rule);
+        await db.SaveChangesAsync(cancellationToken);
+        return true;
     }
 }

@@ -41,6 +41,8 @@ public sealed class FeedRefreshService(IFeedRepository repository, IFeedFetcher 
                     AutomaticScoreReason = score.Reason,
                     AutomaticConfidence = Math.Clamp(score.Confidence, 0, 1),
                     MatchingFeedbackCount = Math.Max(0, score.MatchingFeedbackCount),
+                    PositiveEvidence = Math.Max(0, score.PositiveEvidence),
+                    NegativeEvidence = Math.Max(0, score.NegativeEvidence),
                     ConfidenceReason = score.ConfidenceReason,
                     Score = automatic,
                     ScoreReason = score.Reason

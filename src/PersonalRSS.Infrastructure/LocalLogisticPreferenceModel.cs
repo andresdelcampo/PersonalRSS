@@ -52,12 +52,18 @@ internal static class PrecisionModelTrainer
 {
     public static PrecisionModelContext Build(
         IReadOnlyList<FeedbackExample> feedback,
+        IReadOnlyList<ScoreResult> heldOutHeuristics,
         PreferenceLearningOptions options,
         CancellationToken cancellationToken = default)
     {
+        if (feedback.Count != heldOutHeuristics.Count)
+            throw new ArgumentException("Feedback and held-out heuristic predictions must have the same length.");
         var clusters = DuplicateStoryClusterer.Collapse(feedback, cancellationToken);
         if (clusters.Count < options.MinimumCalibrationExamples)
             return PrecisionModelContext.NotReady(feedback.Count, clusters.Count);
+        var heuristicByCandidate = feedback.Select((item, index) =>
+                (Key: DuplicateStoryClusterer.CandidateKey(item.Article), Score: heldOutHeuristics[index]))
+            .ToDictionary(item => item.Key, item => item.Score, StringComparer.Ordinal);
 
         var folds = Math.Clamp(options.CalibrationFolds, 2, Math.Min(10, clusters.Count));
         var crossFitted = new Dictionary<string, double>(StringComparer.Ordinal);
@@ -67,14 +73,17 @@ internal static class PrecisionModelTrainer
             var training = clusters.Where(cluster => Fold(cluster.StableKey, folds) != fold).ToArray();
             var validation = clusters.Where(cluster => Fold(cluster.StableKey, folds) == fold).ToArray();
             if (validation.Length == 0) continue;
-            var model = LocalLogisticPreferenceModel.Train(training, cancellationToken);
+            var model = LocalLogisticPreferenceModel.Train(training, options, cancellationToken);
             foreach (var cluster in validation) crossFitted[cluster.StableKey] = model.Predict(cluster.Representative.Article).Probability;
         }
 
         var evaluated = clusters
-            .Where(cluster => crossFitted.ContainsKey(cluster.StableKey))
+            .Where(cluster => crossFitted.ContainsKey(cluster.StableKey) &&
+                              heuristicByCandidate.ContainsKey(DuplicateStoryClusterer.CandidateKey(cluster.Representative.Article)))
             .Select(cluster => new CalibrationExample(
-                crossFitted[cluster.StableKey],
+                CombinedProbability(
+                    heuristicByCandidate[DuplicateStoryClusterer.CandidateKey(cluster.Representative.Article)].Value,
+                    crossFitted[cluster.StableKey]),
                 (int)cluster.Representative.Kind > 0,
                 cluster))
             .ToArray();
@@ -84,10 +93,11 @@ internal static class PrecisionModelTrainer
         foreach (var item in evaluated)
         {
             foreach (var member in item.Cluster.Members.Where(member => member.Article.FeedSourceId.HasValue))
-                memberPredictions[(member.Article.FeedSourceId!.Value, member.Article.ExternalId)] = item.Probability;
+                memberPredictions[(member.Article.FeedSourceId!.Value, member.Article.ExternalId)] =
+                    crossFitted[item.Cluster.StableKey];
         }
         return new PrecisionModelContext(
-            LocalLogisticPreferenceModel.Train(clusters, cancellationToken),
+            LocalLogisticPreferenceModel.Train(clusters, options, cancellationToken),
             memberPredictions,
             positiveCutoff,
             negativeCutoff,
@@ -95,25 +105,30 @@ internal static class PrecisionModelTrainer
             clusters.Count);
     }
 
+    public static double CombinedProbability(double heuristicProbability, double classifierProbability) =>
+        Math.Clamp((heuristicProbability + classifierProbability) / 2, 0, 1);
+
     private static CalibratedCutoff Calibrate(
         IReadOnlyList<CalibrationExample> examples,
         bool positive,
         double targetPrecision,
         int minimumPredictions)
     {
+        var eligible = examples.Where(example => positive ? example.Probability >= 0.5 : example.Probability <= 0.5);
         var ordered = positive
-            ? examples.Where(example => example.Probability >= 0.5).OrderByDescending(example => example.Probability).ToArray()
-            : examples.Where(example => example.Probability <= 0.5).OrderBy(example => example.Probability).ToArray();
+            ? eligible.GroupBy(example => example.Probability).OrderByDescending(group => group.Key).ToArray()
+            : eligible.GroupBy(example => example.Probability).OrderBy(group => group.Key).ToArray();
         CalibratedCutoff? best = null;
         var correct = 0;
-        for (var index = 0; index < ordered.Length; index++)
+        var count = 0;
+        foreach (var group in ordered)
         {
-            if (ordered[index].IsPositive == positive) correct++;
-            var count = index + 1;
+            correct += group.Count(example => example.IsPositive == positive);
+            count += group.Count();
             if (count < minimumPredictions) continue;
             var precision = correct / (double)count;
             if (precision + 1e-9 < targetPrecision) continue;
-            best = new CalibratedCutoff(ordered[index].Probability, precision, count);
+            best = new CalibratedCutoff(group.Key, precision, count);
         }
         return best ?? new CalibratedCutoff(positive ? 1 : 0, 0, 0);
     }
@@ -142,15 +157,30 @@ internal sealed class LocalLogisticPreferenceModel
 
     public static LocalLogisticPreferenceModel Train(
         IReadOnlyList<StoryFeedbackCluster> clusters,
+        PreferenceLearningOptions options,
         CancellationToken cancellationToken = default)
     {
         var raw = clusters.Select(cluster => LocalPreferenceScoringProvider.LogisticFeatures(cluster.Representative.Article)).ToArray();
+        var targets = clusters.Select(cluster => (int)cluster.Representative.Kind > 0 ? 1d : 0d).ToArray();
+        var magnitudes = clusters.Select(cluster => (double)Math.Abs((int)cluster.Representative.Kind)).ToArray();
+        var positiveWeight = targets.Select((target, index) => target > 0.5 ? magnitudes[index] : 0).Sum();
+        var negativeWeight = targets.Select((target, index) => target < 0.5 ? magnitudes[index] : 0).Sum();
         var documentFrequency = raw.SelectMany(features => features.Keys.Distinct(StringComparer.OrdinalIgnoreCase))
             .GroupBy(feature => feature, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
+        var classEvidence = raw.SelectMany((features, index) => features.Keys.Distinct(StringComparer.OrdinalIgnoreCase)
+                .Select(feature => new { Feature = feature, Target = targets[index], Weight = magnitudes[index] }))
+            .GroupBy(item => item.Feature, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => new FeatureClassEvidence(
+                    group.Where(item => item.Target > 0.5).Sum(item => item.Weight),
+                    group.Where(item => item.Target < 0.5).Sum(item => item.Weight)),
+                StringComparer.OrdinalIgnoreCase);
         var maximumFrequency = Math.Max(5, (int)Math.Ceiling(clusters.Count * 0.35));
         var vocabulary = documentFrequency
             .Where(item => item.Value <= maximumFrequency && (item.Value >= 2 || item.Key.StartsWith("topic:", StringComparison.OrdinalIgnoreCase)))
+            .Where(item => IsDiscriminative(classEvidence[item.Key], positiveWeight, negativeWeight, options.MinimumFeatureLogOdds))
             .Select(item => item.Key)
             .OrderBy(feature => feature, StringComparer.OrdinalIgnoreCase)
             .ToArray();
@@ -159,11 +189,9 @@ internal sealed class LocalLogisticPreferenceModel
         var idf = vocabulary.Select(feature => 1 + Math.Log((clusters.Count + 1d) / (documentFrequency[feature] + 1d))).ToArray();
         var samples = raw.Select((features, index) => new TrainingSample(
             Vectorize(features, indexes, idf),
-            (int)clusters[index].Representative.Kind > 0 ? 1d : 0d,
-            Math.Abs((int)clusters[index].Representative.Kind))).ToArray();
-        var positiveWeight = samples.Where(sample => sample.Target > 0.5).Sum(sample => sample.SampleWeight);
-        var negativeWeight = samples.Where(sample => sample.Target < 0.5).Sum(sample => sample.SampleWeight);
-        var bias = Math.Log((positiveWeight + 1) / (negativeWeight + 1));
+            targets[index],
+            BalancedSampleWeight(targets[index], magnitudes[index], positiveWeight, negativeWeight))).ToArray();
+        var bias = 0d;
         var weights = new double[vocabulary.Length];
         var gradient = new double[vocabulary.Length];
         var totalSampleWeight = Math.Max(1, samples.Sum(sample => sample.SampleWeight));
@@ -185,6 +213,30 @@ internal sealed class LocalLogisticPreferenceModel
                 weights[index] -= step * (gradient[index] / totalSampleWeight + 0.005 * weights[index]);
         }
         return new LocalLogisticPreferenceModel(indexes, vocabulary, idf, weights, bias);
+    }
+
+    private static bool IsDiscriminative(
+        FeatureClassEvidence evidence,
+        double positiveWeight,
+        double negativeWeight,
+        double minimumLogOdds)
+    {
+        if (positiveWeight <= 0 || negativeWeight <= 0 || minimumLogOdds <= 0) return true;
+        var positiveRate = (evidence.PositiveWeight + 1) / (positiveWeight + 2);
+        var negativeRate = (evidence.NegativeWeight + 1) / (negativeWeight + 2);
+        return Math.Abs(Math.Log(positiveRate / negativeRate)) >= minimumLogOdds;
+    }
+
+    private static double BalancedSampleWeight(
+        double target,
+        double magnitude,
+        double positiveWeight,
+        double negativeWeight)
+    {
+        if (positiveWeight <= 0 || negativeWeight <= 0) return magnitude;
+        var targetClassWeight = (positiveWeight + negativeWeight) / 2;
+        var classWeight = target > 0.5 ? positiveWeight : negativeWeight;
+        return magnitude * targetClassWeight / classWeight;
     }
 
     public LogisticPrediction Predict(ArticleCandidate article)
@@ -231,4 +283,5 @@ internal sealed class LocalLogisticPreferenceModel
 
     private sealed record TrainingSample(FeatureValue[] Values, double Target, double SampleWeight);
     private sealed record FeatureValue(int Index, double Value);
+    private sealed record FeatureClassEvidence(double PositiveWeight, double NegativeWeight);
 }

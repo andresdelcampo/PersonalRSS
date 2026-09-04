@@ -55,6 +55,10 @@ public sealed class FeedImportServiceTests
         public Task<int> UpdateAutomaticScoresAsync(IReadOnlyCollection<AutomaticScoreUpdate> updates, CancellationToken cancellationToken = default) => Task.FromResult(updates.Count);
         public Task SetFeedbackAsync(Guid articleId, FeedbackKind kind, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task ClearFeedbackAsync(Guid articleId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task<IReadOnlyList<AvoidedTopicRule>> GetAvoidedTopicRulesAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<AvoidedTopicRule>>([]);
+        public Task<AvoidedTopicRule> AddAvoidedTopicRuleAsync(string phrase, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<AvoidedTopicRule?> UpdateAvoidedTopicRuleAsync(Guid id, string phrase, CancellationToken cancellationToken = default) => Task.FromResult<AvoidedTopicRule?>(null);
+        public Task<bool> DeleteAvoidedTopicRuleAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult(false);
         public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }

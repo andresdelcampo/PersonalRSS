@@ -25,6 +25,8 @@ public sealed class PreferenceRescoringService(IFeedRepository repository, IScor
                 score.Reason,
                 Math.Clamp(score.Confidence, 0, 1),
                 Math.Max(0, score.MatchingFeedbackCount),
+                Math.Max(0, score.PositiveEvidence),
+                Math.Max(0, score.NegativeEvidence),
                 score.ConfidenceReason));
         }
         return await repository.UpdateAutomaticScoresAsync(updates, cancellationToken);
