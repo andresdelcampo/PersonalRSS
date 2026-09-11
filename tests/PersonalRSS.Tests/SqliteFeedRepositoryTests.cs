@@ -190,6 +190,43 @@ public sealed class SqliteFeedRepositoryTests
     }
 
     [Fact]
+    public async Task Recommended_unread_articles_include_all_feeds_without_the_preview_limit()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"personalrss-recommended-unread-test-{Guid.NewGuid():N}.db");
+        try
+        {
+            var options = new DbContextOptionsBuilder<PersonalRssDbContext>().UseSqlite($"Data Source={databasePath}").Options;
+            var repository = new SqliteFeedRepository(new TestContextFactory(options));
+            await repository.InitializeAsync();
+            var firstFeed = new FeedSource { Name = "First", Slug = "first", Url = "https://example.test/first.xml" };
+            var secondFeed = new FeedSource { Name = "Second", Slug = "second", Url = "https://example.test/second.xml" };
+            await repository.AddFeedsAsync([firstFeed, secondFeed]);
+            var highArticles = Enumerable.Range(0, 501)
+                .Select(index => Article(firstFeed.Id, $"high-{index}", DateTimeOffset.UtcNow.AddMinutes(-index), 0.8))
+                .ToList();
+            foreach (var article in highArticles) article.AutomaticConfidence = 0.5;
+            var maybe = Article(secondFeed.Id, "maybe", DateTimeOffset.UtcNow, 0.8);
+            maybe.AutomaticConfidence = 0.49;
+            var filtered = Article(secondFeed.Id, "filtered", DateTimeOffset.UtcNow, 0.2);
+            filtered.AutomaticConfidence = 0.5;
+            await repository.UpsertArticlesAsync([.. highArticles, maybe, filtered]);
+            await repository.SetArticleReadStateAsync(highArticles[0].Id, false, false, DateTimeOffset.UtcNow);
+
+            var articles = await repository.GetUnreadArticlesByBandsAsync([RelevanceBand.High, RelevanceBand.Maybe]);
+
+            Assert.Equal(501, articles.Count);
+            Assert.Contains(articles, article => article.Id == maybe.Id && article.FeedSourceId == secondFeed.Id);
+            Assert.DoesNotContain(articles, article => article.Id == filtered.Id || article.Id == highArticles[0].Id);
+            Assert.All(articles, article => Assert.True(article.IsUnread));
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+        }
+    }
+
+    [Fact]
     public async Task Delete_feed_removes_its_articles_and_feedback()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"personalrss-delete-feed-test-{Guid.NewGuid():N}.db");

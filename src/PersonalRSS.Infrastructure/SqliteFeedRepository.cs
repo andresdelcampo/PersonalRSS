@@ -236,6 +236,32 @@ public sealed class SqliteFeedRepository(IDbContextFactory<PersonalRssDbContext>
         return articles.OrderByDescending(x => x.PublishedAt).Take(Math.Clamp(limit, 1, 500)).ToList();
     }
 
+    public async Task<IReadOnlyList<Article>> GetUnreadArticlesByBandsAsync(IReadOnlyCollection<RelevanceBand> bands, CancellationToken cancellationToken = default)
+    {
+        if (bands.Count == 0) return [];
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var viewedAt = await db.Feeds.AsNoTracking().ToDictionaryAsync(x => x.Id, x => x.LastViewedAt, cancellationToken);
+        var articles = await db.Articles.AsNoTracking().ToListAsync(cancellationToken);
+        var articleIds = articles.Select(x => x.Id).ToHashSet();
+        var activeFeedback = (await db.Feedback.AsNoTracking()
+                .Where(x => articleIds.Contains(x.ArticleId))
+                .ToListAsync(cancellationToken))
+            .GroupBy(x => x.ArticleId)
+            .ToDictionary(group => group.Key, group => group.OrderByDescending(x => x.CreatedAt).First().Kind);
+        var includedBands = bands.ToHashSet();
+        foreach (var article in articles)
+        {
+            if (activeFeedback.TryGetValue(article.Id, out var kind)) article.ActiveFeedback = kind;
+            article.IsUnread = viewedAt.TryGetValue(article.FeedSourceId, out var viewed) &&
+                (article.IsUnreadPinned || (article.ReadAt is null && (viewed is null || article.IngestedAt > viewed)));
+        }
+        return articles
+            .Where(article => article.IsUnread && includedBands.Contains(RelevanceBands.Classify(
+                article.AutomaticScore, article.AutomaticConfidence, article.ActiveFeedback)))
+            .OrderByDescending(article => article.PublishedAt)
+            .ToList();
+    }
+
     public async Task<bool> SetArticleReadStateAsync(Guid articleId, bool isUnread, bool automatic, DateTimeOffset changedAt, CancellationToken cancellationToken = default)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);

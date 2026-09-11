@@ -19,6 +19,7 @@ public interface IFeedRepository
     Task<int> UpsertArticlesAsync(IEnumerable<Article> articles, CancellationToken cancellationToken = default);
     Task<Article?> GetArticleAsync(Guid id, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<Article>> GetArticlesAsync(Guid? feedId, double minimumScore, int limit, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<Article>> GetUnreadArticlesByBandsAsync(IReadOnlyCollection<RelevanceBand> bands, CancellationToken cancellationToken = default);
     Task<bool> SetArticleReadStateAsync(Guid articleId, bool isUnread, bool automatic, DateTimeOffset changedAt, CancellationToken cancellationToken = default);
     Task<int> SetArticlesReadStateAsync(IReadOnlyCollection<Guid> articleIds, bool isUnread, bool automatic, DateTimeOffset changedAt, CancellationToken cancellationToken = default);
     Task<int> MarkArticlesReadAsync(IReadOnlyCollection<Guid> articleIds, bool automatic, DateTimeOffset readAt, CancellationToken cancellationToken = default);

@@ -47,6 +47,7 @@ public sealed class FeedImportServiceTests
         public Task<int> UpsertArticlesAsync(IEnumerable<Article> articles, CancellationToken cancellationToken = default) => Task.FromResult(0);
         public Task<Article?> GetArticleAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult<Article?>(null);
         public Task<IReadOnlyList<Article>> GetArticlesAsync(Guid? feedId, double minimumScore, int limit, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Article>>([]);
+        public Task<IReadOnlyList<Article>> GetUnreadArticlesByBandsAsync(IReadOnlyCollection<RelevanceBand> bands, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<Article>>([]);
         public Task<bool> SetArticleReadStateAsync(Guid articleId, bool isUnread, bool automatic, DateTimeOffset changedAt, CancellationToken cancellationToken = default) => Task.FromResult(false);
         public Task<int> SetArticlesReadStateAsync(IReadOnlyCollection<Guid> articleIds, bool isUnread, bool automatic, DateTimeOffset changedAt, CancellationToken cancellationToken = default) => Task.FromResult(0);
         public Task<int> MarkArticlesReadAsync(IReadOnlyCollection<Guid> articleIds, bool automatic, DateTimeOffset readAt, CancellationToken cancellationToken = default) => Task.FromResult(0);
