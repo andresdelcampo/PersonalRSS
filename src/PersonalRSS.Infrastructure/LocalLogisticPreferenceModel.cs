@@ -59,7 +59,9 @@ internal static class PrecisionModelTrainer
         if (feedback.Count != heldOutHeuristics.Count)
             throw new ArgumentException("Feedback and held-out heuristic predictions must have the same length.");
         var clusters = DuplicateStoryClusterer.Collapse(feedback, cancellationToken);
-        if (clusters.Count < options.MinimumCalibrationExamples)
+        if (clusters.Count < options.MinimumCalibrationExamples ||
+            !clusters.Any(cluster => (int)cluster.Representative.Kind > 0) ||
+            !clusters.Any(cluster => (int)cluster.Representative.Kind < 0))
             return PrecisionModelContext.NotReady(feedback.Count, clusters.Count);
         var heuristicByCandidate = feedback.Select((item, index) =>
                 (Key: DuplicateStoryClusterer.CandidateKey(item.Article), Score: heldOutHeuristics[index]))
@@ -114,7 +116,9 @@ internal static class PrecisionModelTrainer
         double targetPrecision,
         int minimumPredictions)
     {
-        var eligible = examples.Where(example => positive ? example.Probability >= 0.5 : example.Probability <= 0.5);
+        // Neutral predictions provide no evidence for either decision, even if
+        // most votes happen to be on one side.
+        var eligible = examples.Where(example => positive ? example.Probability > 0.5 : example.Probability < 0.5);
         var ordered = positive
             ? eligible.GroupBy(example => example.Probability).OrderByDescending(group => group.Key).ToArray()
             : eligible.GroupBy(example => example.Probability).OrderBy(group => group.Key).ToArray();
@@ -177,9 +181,8 @@ internal sealed class LocalLogisticPreferenceModel
                     group.Where(item => item.Target > 0.5).Sum(item => item.Weight),
                     group.Where(item => item.Target < 0.5).Sum(item => item.Weight)),
                 StringComparer.OrdinalIgnoreCase);
-        var maximumFrequency = Math.Max(5, (int)Math.Ceiling(clusters.Count * 0.35));
         var vocabulary = documentFrequency
-            .Where(item => item.Value <= maximumFrequency && (item.Value >= 2 || item.Key.StartsWith("topic:", StringComparison.OrdinalIgnoreCase)))
+            .Where(item => item.Value >= 2 || item.Key.StartsWith("topic:", StringComparison.OrdinalIgnoreCase))
             .Where(item => IsDiscriminative(classEvidence[item.Key], positiveWeight, negativeWeight, options.MinimumFeatureLogOdds))
             .Select(item => item.Key)
             .OrderBy(feature => feature, StringComparer.OrdinalIgnoreCase)
@@ -242,7 +245,7 @@ internal sealed class LocalLogisticPreferenceModel
     public LogisticPrediction Predict(ArticleCandidate article)
     {
         var values = Vectorize(LocalPreferenceScoringProvider.LogisticFeatures(article), _featureIndexes, _idf);
-        var probability = Sigmoid(_bias + Dot(_weights, values));
+        var probability = values.Length == 0 ? 0.5 : Sigmoid(_bias + Dot(_weights, values));
         var strongest = values
             .Select(value => (Feature: _featureNames[value.Index], Contribution: _weights[value.Index] * value.Value))
             .Where(item => Math.Abs(item.Contribution) >= 0.01)

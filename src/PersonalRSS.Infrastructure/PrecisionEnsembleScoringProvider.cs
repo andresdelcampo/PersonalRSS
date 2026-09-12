@@ -19,19 +19,14 @@ public sealed class PrecisionEnsembleScoringProvider(
     public string Name => "local-precision-ensemble";
 
     public async Task<ScoreResult> ScoreAsync(ArticleCandidate article, CancellationToken cancellationToken = default)
-    {
-        var heuristic = await heuristicProvider.ScoreAsync(article, cancellationToken);
-        var feedback = await repository.GetFeedbackExamplesAsync(null, cancellationToken);
-        var result = Combine(article, heuristic, await ModelContextAsync(feedback, cancellationToken));
-        return ApplyAvoidedTopicRules(article, result, await repository.GetAvoidedTopicRulesAsync(cancellationToken));
-    }
+        => (await ScoreAsync([article], cancellationToken))[0];
 
     public async Task<IReadOnlyList<ScoreResult>> ScoreAsync(
         IReadOnlyList<ArticleCandidate> articles,
         CancellationToken cancellationToken = default)
     {
-        var heuristic = await heuristicProvider.ScoreAsync(articles, cancellationToken);
         var feedback = await repository.GetFeedbackExamplesAsync(null, cancellationToken);
+        var heuristic = await heuristicProvider.ScoreWithFeedbackAsync(articles, feedback, cancellationToken);
         var context = await ModelContextAsync(feedback, cancellationToken);
         var rules = await repository.GetAvoidedTopicRulesAsync(cancellationToken);
         return articles.Select((article, index) => ApplyAvoidedTopicRules(article, Combine(article, heuristic[index], context), rules)).ToArray();
@@ -58,8 +53,8 @@ public sealed class PrecisionEnsembleScoringProvider(
         try
         {
             if (_cachedContext is not null && string.Equals(_cachedFingerprint, fingerprint, StringComparison.Ordinal)) return _cachedContext;
-            var heldOutHeuristics = await heuristicProvider.ScoreAsync(
-                feedback.Select(item => item.Article).ToArray(), cancellationToken);
+            var heldOutHeuristics = await heuristicProvider.ScoreWithFeedbackAsync(
+                feedback.Select(item => item.Article).ToArray(), feedback, cancellationToken);
             var context = PrecisionModelTrainer.Build(feedback, heldOutHeuristics, _learning, cancellationToken);
             _cachedContext = context;
             _cachedFingerprint = fingerprint;

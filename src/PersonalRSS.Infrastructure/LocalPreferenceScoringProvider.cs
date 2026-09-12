@@ -40,14 +40,19 @@ public sealed partial class LocalPreferenceScoringProvider(
     public string Name => "local-preference-model";
 
     public async Task<ScoreResult> ScoreAsync(ArticleCandidate article, CancellationToken cancellationToken = default)
-    {
-        var examples = await repository.GetFeedbackExamplesAsync(StableId(article), cancellationToken);
-        return await ScoreAsync(article, Prepare(examples, cancellationToken), null, cancellationToken);
-    }
+        => (await ScoreAsync([article], cancellationToken))[0];
 
     public async Task<IReadOnlyList<ScoreResult>> ScoreAsync(IReadOnlyList<ArticleCandidate> articles, CancellationToken cancellationToken = default)
     {
         var examples = await repository.GetFeedbackExamplesAsync(null, cancellationToken);
+        return await ScoreWithFeedbackAsync(articles, examples, cancellationToken);
+    }
+
+    internal async Task<IReadOnlyList<ScoreResult>> ScoreWithFeedbackAsync(
+        IReadOnlyList<ArticleCandidate> articles,
+        IReadOnlyList<FeedbackExample> examples,
+        CancellationToken cancellationToken)
+    {
         var context = Prepare(examples, cancellationToken);
         var feedbackIndexes = context.Examples.SelectMany((item, index) => item.MemberKeys.Select(key => (Key: key, Index: index)))
             .ToDictionary(item => item.Key, item => item.Index);
@@ -83,7 +88,8 @@ public sealed partial class LocalPreferenceScoringProvider(
             var documentFrequency = sharedFeatures.ToDictionary(feature => feature,
                 feature => AdjustedDocumentFrequency(feature, context, excludedIndex), StringComparer.OrdinalIgnoreCase);
             var meaningfulFeatures = sharedFeatures
-                .Where(feature => IsMeaningfulIndependentFeature(feature, documentFrequency.GetValueOrDefault(feature), exampleCount))
+                .Where(feature => IsMeaningfulIndependentFeature(feature, documentFrequency.GetValueOrDefault(feature), exampleCount) ||
+                                  HasConsistentClassPreference(feature, context, excludedIndex))
                 .ToArray();
             var selectedFeatures = SelectEvidenceFeatures(meaningfulFeatures, documentFrequency);
             if (selectedFeatures.Length == 0) continue;
@@ -172,7 +178,45 @@ public sealed partial class LocalPreferenceScoringProvider(
         var documentFrequency = prepared.SelectMany(item => item.Features.Keys.Distinct(StringComparer.OrdinalIgnoreCase))
             .GroupBy(feature => feature, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
-        return new LearningContext(prepared, documentFrequency, examples.Count);
+        var classEvidence = prepared.SelectMany(item => item.Features.Keys.Select(feature =>
+                (Feature: feature, Vote: (int)item.Example.Kind)))
+            .GroupBy(item => item.Feature, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => new ClassEvidence(
+                group.Sum(item => Math.Max(0, item.Vote)), group.Sum(item => Math.Max(0, -item.Vote))), StringComparer.OrdinalIgnoreCase);
+        return new LearningContext(prepared, documentFrequency, classEvidence,
+            prepared.Sum(item => Math.Max(0, (int)item.Example.Kind)),
+            prepared.Sum(item => Math.Max(0, -(int)item.Example.Kind)));
+    }
+
+    private static bool HasConsistentClassPreference(string feature, LearningContext context, int? excludedIndex)
+    {
+        var evidence = context.ClassEvidence.GetValueOrDefault(feature);
+        if (evidence is null) return false;
+        var positive = evidence.Positive;
+        var negative = evidence.Negative;
+        var positiveTotal = context.PositiveWeight;
+        var negativeTotal = context.NegativeWeight;
+        if (excludedIndex.HasValue)
+        {
+            var excluded = context.Examples[excludedIndex.Value];
+            var positiveVote = Math.Max(0, (int)excluded.Example.Kind);
+            var negativeVote = Math.Max(0, -(int)excluded.Example.Kind);
+            positiveTotal -= positiveVote;
+            negativeTotal -= negativeVote;
+            if (excluded.Features.ContainsKey(feature))
+            {
+                positive -= positiveVote;
+                negative -= negativeVote;
+            }
+        }
+        // Frequency alone must not erase a well-established interest. Require both
+        // classes, directional agreement and a smoothed, class-balanced contrast.
+        if (positiveTotal <= 0 || negativeTotal <= 0 || positive + negative < 3) return false;
+        var agreement = Math.Abs(positive - negative) / (double)(positive + negative);
+        var logRatio = Math.Log(((positive + 1d) / (positiveTotal + 2d)) /
+                               ((negative + 1d) / (negativeTotal + 2d)));
+        return agreement >= 0.5 && Math.Abs(logRatio) >= Math.Log(2) &&
+               Math.Sign(logRatio) == Math.Sign(positive - negative);
     }
 
     private static int AdjustedDocumentFrequency(string feature, LearningContext context, int? excludedIndex)
@@ -180,13 +224,6 @@ public sealed partial class LocalPreferenceScoringProvider(
         var frequency = context.DocumentFrequency.GetValueOrDefault(feature);
         if (excludedIndex.HasValue && context.Examples[excludedIndex.Value].Features.ContainsKey(feature)) frequency--;
         return Math.Max(0, frequency);
-    }
-
-    private static Guid? StableId(ArticleCandidate article)
-    {
-        if (article.FeedSourceId is null) return null;
-        var bytes = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{article.FeedSourceId:N}:{article.ExternalId}"));
-        return new Guid(bytes.AsSpan(0, 16));
     }
 
     private static Dictionary<string, Feature> Features(ArticleCandidate article)
@@ -303,6 +340,7 @@ public sealed partial class LocalPreferenceScoringProvider(
 
     private sealed record Feature(string Label, double Weight);
     private sealed record FeatureEvidence(string Label, double Signed, double Absolute);
+    private sealed record ClassEvidence(int Positive, int Negative);
     private sealed record PreparedFeedbackExample(
         FeedbackExample Example,
         Dictionary<string, Feature> Features,
@@ -310,5 +348,7 @@ public sealed partial class LocalPreferenceScoringProvider(
     private sealed record LearningContext(
         IReadOnlyList<PreparedFeedbackExample> Examples,
         IReadOnlyDictionary<string, int> DocumentFrequency,
-        int OriginalFeedbackCount);
+        IReadOnlyDictionary<string, ClassEvidence> ClassEvidence,
+        int PositiveWeight,
+        int NegativeWeight);
 }
