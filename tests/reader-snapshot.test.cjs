@@ -6,6 +6,9 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '../src/PersonalRSS.Web/Program.cs'), 'utf8');
 const loadFunction = source.slice(source.indexOf('async function load(resetOrder='), source.indexOf('function visibleStateTargets'));
+const selectFunctions = source.slice(source.indexOf('function selectAllFeeds('), source.indexOf('function showWelcome('));
+const refreshFunction = source.slice(source.indexOf('async function loadAndRefresh('), source.indexOf('renameForm.onsubmit'));
+const bandFunction = source.slice(source.indexOf('function setBand('), source.indexOf('function setDisplayOptions'));
 
 function reader(allFeeds) {
   const context = vm.createContext({
@@ -50,4 +53,53 @@ test('single-feed background reload still updates its articles', async () => {
   await page.load(false);
   assert.equal(page.requests, 1);
   assert.equal(page.renders, 1);
+});
+
+test('switching relevance resets the posts page to the top', () => {
+  let scrolls = 0;
+  const button = () => ({ setAttribute: () => {} });
+  const context = vm.createContext({
+    bandMode: 'high', viewMode: 'unread', bandHigh: button(), bandMaybe: button(), bandFiltered: button(),
+    sessionRead: new Set(['read-during-previous-band']),
+    temporarilyVisible: new Set(), readLimit: 25, localStorage: { setItem: () => {} },
+    render: () => {}, window: { scrollTo: (x, y) => { scrolls++; assert.equal(x, 0); assert.equal(y, 0); } }
+  });
+  vm.runInContext(bandFunction, context);
+  context.setBand('maybe');
+  assert.equal(scrolls, 1);
+  assert.equal(context.sessionRead.size, 0);
+  context.setBand('maybe');
+  assert.equal(scrolls, 1);
+});
+
+test('clicking the active feed reloads its posts page', () => {
+  let reloads = 0;
+  const context = vm.createContext({
+    localStorage: { setItem: () => {} }, history: { pushState: () => {} },
+    list: { querySelectorAll: () => [] }, welcome: {}, innerWidth: 1000,
+    frame: { hidden: false, src: 'http://localhost/preview/example?embedded=1', contentWindow: { location: { reload: () => reloads++ } } },
+    encodeURIComponent, setTimeout
+  });
+  vm.runInContext(selectFunctions, context);
+  context.selectFeed({ slug: 'example' }, true);
+  assert.equal(reloads, 1);
+  context.selectFeed({ slug: 'example' }, false);
+  assert.equal(reloads, 1);
+  context.frame.src = 'http://localhost/preview/all?embedded=1&all=1';
+  context.selectAllFeeds(true);
+  assert.equal(reloads, 2);
+});
+
+test('explicit feed refresh reloads an active All feeds page', async () => {
+  let reloads = 0;
+  const feeds = [{ id: 'feed', unreadCount: 1, maybeUnreadCount: 2 }];
+  const context = vm.createContext({
+    localStorage: { setItem: () => {} }, refreshButton: {}, message: {},
+    getFeeds: async () => feeds, renderFeeds: () => {}, refreshFeeds: async () => [{ ok: true }],
+    frame: { hidden: false, contentWindow: { location: { reload: () => reloads++ } } },
+    selectedSlug: () => '*'
+  });
+  vm.runInContext(refreshFunction, context);
+  await context.loadAndRefresh(true, true);
+  assert.equal(reloads, 1);
 });
