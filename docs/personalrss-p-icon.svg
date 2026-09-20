@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 260" role="img" aria-labelledby="title description">
+  <title id="title">PersonalRSS P icon</title>
+  <desc id="description">The orange P and RSS monogram from the PersonalRSS logo.</desc>
+  <defs>
+    <linearGradient id="orange" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#ff8700"/>
+      <stop offset=".55" stop-color="#ff7200"/>
+      <stop offset="1" stop-color="#ff5d00"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#orange)" d="M28 243c-9 0-15-6-15-15V27c0-9 6-15 15-15h68c58 0 96 39 96 95 0 54-39 92-98 97v-34c39-4 66-27 66-63 0-38-27-64-65-64H44v185c0 9-6 15-16 15Z"/>
+  <path fill="url(#orange)" d="M44 58h37a66 66 0 0 1 17 130l-6-23a42 42 0 0 0-11-83H44V58Z"/>
+  <circle cx="81" cy="124" r="21" fill="url(#orange)"/>
+</svg>
