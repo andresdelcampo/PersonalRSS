@@ -8,7 +8,7 @@ const source = fs.readFileSync(path.join(__dirname, '../src/PersonalRSS.Web/Prog
 const loadFunction = source.slice(source.indexOf('async function load(resetOrder='), source.indexOf('function visibleStateTargets'));
 const selectFunctions = source.slice(source.indexOf('function selectAllFeeds('), source.indexOf('function showWelcome('));
 const refreshFunction = source.slice(source.indexOf('async function loadAndRefresh('), source.indexOf('renameForm.onsubmit'));
-const bandFunction = source.slice(source.indexOf('function setBand('), source.indexOf('function setDisplayOptions'));
+const bandFunction = source.slice(source.indexOf('async function setBand('), source.indexOf('function setDisplayOptions'));
 
 function reader(allFeeds) {
   const context = vm.createContext({
@@ -55,21 +55,25 @@ test('single-feed background reload still updates its articles', async () => {
   assert.equal(page.renders, 1);
 });
 
-test('switching relevance resets the posts page to the top', () => {
+test('switching relevance refreshes the snapshot and resets the posts page to the top', async () => {
   let scrolls = 0;
+  let loads = 0;
   const button = () => ({ setAttribute: () => {} });
   const context = vm.createContext({
     bandMode: 'high', viewMode: 'unread', bandHigh: button(), bandMaybe: button(), bandFiltered: button(),
     sessionRead: new Set(['read-during-previous-band']),
-    temporarilyVisible: new Set(), readLimit: 25, localStorage: { setItem: () => {} },
-    render: () => {}, window: { scrollTo: (x, y) => { scrolls++; assert.equal(x, 0); assert.equal(y, 0); } }
+    temporarilyVisible: new Set(), readLimit: 25, bandSwitchInFlight: false, localStorage: { setItem: () => {} },
+    render: () => {}, load: async () => { loads++; }, setStatus: () => {},
+    window: { scrollTo: (x, y) => { scrolls++; assert.equal(x, 0); assert.equal(y, 0); } }
   });
   vm.runInContext(bandFunction, context);
-  context.setBand('maybe');
+  await context.setBand('maybe');
   assert.equal(scrolls, 1);
+  assert.equal(loads, 1);
   assert.equal(context.sessionRead.size, 0);
-  context.setBand('maybe');
+  await context.setBand('maybe');
   assert.equal(scrolls, 1);
+  assert.equal(loads, 1);
 });
 
 test('clicking the active feed reloads its posts page', () => {
