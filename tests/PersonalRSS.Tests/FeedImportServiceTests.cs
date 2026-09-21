@@ -60,6 +60,14 @@ public sealed class FeedImportServiceTests
         public Task<AvoidedTopicRule> AddAvoidedTopicRuleAsync(string phrase, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<AvoidedTopicRule?> UpdateAvoidedTopicRuleAsync(Guid id, string phrase, CancellationToken cancellationToken = default) => Task.FromResult<AvoidedTopicRule?>(null);
         public Task<bool> DeleteAvoidedTopicRuleAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult(false);
+        public Task<IReadOnlyList<PreferredTopicRule>> GetPreferredTopicRulesAsync(CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<PreferredTopicRule>>([]);
+        public Task<PreferredTopicRule> AddPreferredTopicRuleAsync(string phrase, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<PreferredTopicRule?> UpdatePreferredTopicRuleAsync(Guid id, string phrase, CancellationToken cancellationToken = default) => Task.FromResult<PreferredTopicRule?>(null);
+        public Task<bool> DeletePreferredTopicRuleAsync(Guid id, CancellationToken cancellationToken = default) => Task.FromResult(false);
+        public Task<LocalAiSettings> GetLocalAiSettingsAsync(CancellationToken cancellationToken = default) => Task.FromResult(new LocalAiSettings());
+        public Task<LocalAiSettings> SaveLocalAiSettingsAsync(bool enabled, string endpoint, string model, CancellationToken cancellationToken = default) => Task.FromResult(new LocalAiSettings { Enabled = enabled, Endpoint = endpoint, Model = model });
+        public Task<IReadOnlyList<LocalAiReviewCandidate>> GetLocalAiReviewCandidatesAsync(int limit, CancellationToken cancellationToken = default) => Task.FromResult<IReadOnlyList<LocalAiReviewCandidate>>([]);
+        public Task ApplyLocalAiAssessmentAsync(LocalAiAssessment assessment, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }

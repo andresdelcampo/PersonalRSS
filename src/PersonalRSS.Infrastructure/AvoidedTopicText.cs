@@ -21,10 +21,16 @@ public static partial class AvoidedTopicText
         WebUtility.HtmlDecode(value).ToLowerInvariant(), " "), " ").Trim();
 
     public static bool Matches(ArticleCandidate article, AvoidedTopicRule rule)
+        => Matches(article, rule.NormalizedPhrase);
+
+    public static bool Matches(ArticleCandidate article, PreferredTopicRule rule)
+        => Matches(article, rule.NormalizedPhrase);
+
+    private static bool Matches(ArticleCandidate article, string normalizedPhrase)
     {
         var summary = HtmlTags().Replace(article.Summary ?? string.Empty, " ");
         var searchable = Normalize($"{article.Title} {summary} {article.Author}");
-        return $" {searchable} ".Contains($" {rule.NormalizedPhrase} ", StringComparison.Ordinal);
+        return $" {searchable} ".Contains($" {normalizedPhrase} ", StringComparison.Ordinal);
     }
 
     [GeneratedRegex(@"[^\p{L}\p{N}+#]+", RegexOptions.CultureInvariant)]

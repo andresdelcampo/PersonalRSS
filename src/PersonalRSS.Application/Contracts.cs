@@ -32,6 +32,14 @@ public interface IFeedRepository
     Task<AvoidedTopicRule> AddAvoidedTopicRuleAsync(string phrase, CancellationToken cancellationToken = default);
     Task<AvoidedTopicRule?> UpdateAvoidedTopicRuleAsync(Guid id, string phrase, CancellationToken cancellationToken = default);
     Task<bool> DeleteAvoidedTopicRuleAsync(Guid id, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<PreferredTopicRule>> GetPreferredTopicRulesAsync(CancellationToken cancellationToken = default);
+    Task<PreferredTopicRule> AddPreferredTopicRuleAsync(string phrase, CancellationToken cancellationToken = default);
+    Task<PreferredTopicRule?> UpdatePreferredTopicRuleAsync(Guid id, string phrase, CancellationToken cancellationToken = default);
+    Task<bool> DeletePreferredTopicRuleAsync(Guid id, CancellationToken cancellationToken = default);
+    Task<LocalAiSettings> GetLocalAiSettingsAsync(CancellationToken cancellationToken = default);
+    Task<LocalAiSettings> SaveLocalAiSettingsAsync(bool enabled, string endpoint, string model, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<LocalAiReviewCandidate>> GetLocalAiReviewCandidatesAsync(int limit, CancellationToken cancellationToken = default);
+    Task ApplyLocalAiAssessmentAsync(LocalAiAssessment assessment, CancellationToken cancellationToken = default);
     Task InitializeAsync(CancellationToken cancellationToken = default);
 }
 
@@ -45,6 +53,16 @@ public sealed record FeedImportIssue(string? Name, string? Url, string Reason);
 public sealed record FeedImportResult(int Added, int Skipped, int Invalid, IReadOnlyList<FeedImportIssue> Issues);
 public sealed record RefreshResult(Guid FeedId, int Fetched, int Stored, int NewPosts, string ScoringProvider);
 public sealed record StoredArticleForScoring(Guid ArticleId, ArticleCandidate Candidate);
+public sealed record LocalAiReviewCandidate(Guid ArticleId, ArticleCandidate Candidate);
+public sealed record LocalAiAssessment(
+    Guid ArticleId,
+    string Direction,
+    double? SuggestedScore,
+    double Confidence,
+    string Reason,
+    string? MatchedExample,
+    string Model,
+    DateTimeOffset AssessedAt);
 public sealed record AutomaticScoreUpdate(
     Guid ArticleId,
     double BaselineScore,

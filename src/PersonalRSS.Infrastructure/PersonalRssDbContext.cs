@@ -9,6 +9,8 @@ public sealed class PersonalRssDbContext(DbContextOptions<PersonalRssDbContext> 
     public DbSet<Article> Articles => Set<Article>();
     public DbSet<ArticleFeedback> Feedback => Set<ArticleFeedback>();
     public DbSet<AvoidedTopicRule> AvoidedTopicRules => Set<AvoidedTopicRule>();
+    public DbSet<PreferredTopicRule> PreferredTopicRules => Set<PreferredTopicRule>();
+    public DbSet<LocalAiSettings> LocalAiSettings => Set<LocalAiSettings>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -41,6 +43,19 @@ public sealed class PersonalRssDbContext(DbContextOptions<PersonalRssDbContext> 
             entity.HasIndex(x => x.NormalizedPhrase).IsUnique();
             entity.Property(x => x.Phrase).HasMaxLength(120);
             entity.Property(x => x.NormalizedPhrase).HasMaxLength(120);
+        });
+        modelBuilder.Entity<PreferredTopicRule>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => x.NormalizedPhrase).IsUnique();
+            entity.Property(x => x.Phrase).HasMaxLength(120);
+            entity.Property(x => x.NormalizedPhrase).HasMaxLength(120);
+        });
+        modelBuilder.Entity<LocalAiSettings>(entity =>
+        {
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Endpoint).HasMaxLength(2048);
+            entity.Property(x => x.Model).HasMaxLength(200);
         });
     }
 }

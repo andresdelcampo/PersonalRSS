@@ -28,21 +28,42 @@ public sealed class PrecisionEnsembleScoringProvider(
         var feedback = await repository.GetFeedbackExamplesAsync(null, cancellationToken);
         var heuristic = await heuristicProvider.ScoreWithFeedbackAsync(articles, feedback, cancellationToken);
         var context = await ModelContextAsync(feedback, cancellationToken);
-        var rules = await repository.GetAvoidedTopicRulesAsync(cancellationToken);
-        return articles.Select((article, index) => ApplyAvoidedTopicRules(article, Combine(article, heuristic[index], context), rules)).ToArray();
+        var avoidedRules = await repository.GetAvoidedTopicRulesAsync(cancellationToken);
+        var preferredRules = await repository.GetPreferredTopicRulesAsync(cancellationToken);
+        return articles.Select((article, index) => ApplyExplicitTopicRules(
+            article, Combine(article, heuristic[index], context), preferredRules, avoidedRules)).ToArray();
     }
 
-    private static ScoreResult ApplyAvoidedTopicRules(ArticleCandidate article, ScoreResult result, IReadOnlyList<AvoidedTopicRule> rules)
+    private static ScoreResult ApplyExplicitTopicRules(
+        ArticleCandidate article,
+        ScoreResult result,
+        IReadOnlyList<PreferredTopicRule> preferredRules,
+        IReadOnlyList<AvoidedTopicRule> avoidedRules)
     {
-        var match = rules.OrderByDescending(rule => rule.NormalizedPhrase.Length)
+        var preferred = preferredRules.OrderByDescending(rule => rule.NormalizedPhrase.Length)
             .FirstOrDefault(rule => AvoidedTopicText.Matches(article, rule));
-        if (match is null) return result;
+        var avoided = avoidedRules.OrderByDescending(rule => rule.NormalizedPhrase.Length)
+            .FirstOrDefault(rule => AvoidedTopicText.Matches(article, rule));
+        if (preferred is null && avoided is null) return result;
+        var usePreferred = preferred is not null && (avoided is null || preferred.NormalizedPhrase.Length > avoided.NormalizedPhrase.Length);
+        if (usePreferred)
+        {
+            return result with
+            {
+                Value = 1,
+                Reason = $"Matched your explicit always-included topic \u201c{preferred!.Phrase}\u201d. {result.Reason}",
+                Confidence = 1,
+                ConfidenceReason = "Certain automatic decision (1.00): an explicit always-included topic matched this article. The rule overrides, but does not erase, the learned evidence shown for inspection."
+            };
+        }
         return result with
         {
             Value = 0,
-            Reason = $"Matched your explicit avoided topic \u201c{match.Phrase}\u201d. {result.Reason}",
+            Reason = $"Matched your explicit avoided topic \u201c{avoided!.Phrase}\u201d. {result.Reason}",
             Confidence = 1,
-            ConfidenceReason = "Certain automatic decision (1.00): an explicit avoided-topic rule matched this article. The rule overrides, but does not erase, the learned evidence shown for inspection."
+            ConfidenceReason = preferred is null
+                ? "Certain automatic decision (1.00): an explicit avoided-topic rule matched this article. The rule overrides, but does not erase, the learned evidence shown for inspection."
+                : "Certain automatic decision (1.00): equally specific Always and Never rules matched, so Never wins conservatively. The rules override, but do not erase, the learned evidence shown for inspection."
         };
     }
 

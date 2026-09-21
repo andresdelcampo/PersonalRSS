@@ -34,6 +34,17 @@ public sealed class Article
     public double AutomaticScore { get; set; } = 0.5;
     public string? AutomaticScoreReason { get; set; }
     public double AutomaticConfidence { get; set; }
+    public double LocalAutomaticScore { get; set; } = 0.5;
+    public string? LocalAutomaticScoreReason { get; set; }
+    public double LocalAutomaticConfidence { get; set; }
+    public string? LocalConfidenceReason { get; set; }
+    public string? LocalAiDirection { get; set; }
+    public double? LocalAiScore { get; set; }
+    public double? LocalAiConfidence { get; set; }
+    public string? LocalAiReason { get; set; }
+    public string? LocalAiMatchedExample { get; set; }
+    public string? LocalAiModel { get; set; }
+    public DateTimeOffset? LocalAiAssessedAt { get; set; }
     public int MatchingFeedbackCount { get; set; }
     public double PositiveEvidence { get; set; }
     public double NegativeEvidence { get; set; }
@@ -72,6 +83,23 @@ public sealed class AvoidedTopicRule
     public required string Phrase { get; set; }
     public required string NormalizedPhrase { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public sealed class PreferredTopicRule
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public required string Phrase { get; set; }
+    public required string NormalizedPhrase { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public sealed class LocalAiSettings
+{
+    public int Id { get; set; } = 1;
+    public bool Enabled { get; set; }
+    public string Endpoint { get; set; } = "http://localhost:1234/api/v1/chat";
+    public string Model { get; set; } = "ling-3.0-tiny";
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
 public enum FeedbackKind

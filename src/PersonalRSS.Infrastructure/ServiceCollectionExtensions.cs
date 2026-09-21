@@ -19,9 +19,13 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IFilteredFeedRenderer, RssFeedRenderer>();
         services.AddSingleton<ISubscriptionListParser, OpmlSubscriptionListParser>();
         services.AddHttpClient<IFeedFetcher, HttpFeedFetcher>(client => { client.Timeout = TimeSpan.FromSeconds(30); client.DefaultRequestHeaders.UserAgent.ParseAdd("PersonalRSS/0.1"); });
+        services.AddHttpClient(nameof(LocalAiReviewService));
+        services.AddHttpClient(nameof(LmStudioControlService));
         services.AddScoped<FeedRefreshService>();
         services.AddScoped<FeedImportService>();
         services.AddScoped<PreferenceRescoringService>();
+        services.AddSingleton<LocalAiReviewService>();
+        services.AddSingleton<LmStudioControlService>();
         return services;
     }
 }

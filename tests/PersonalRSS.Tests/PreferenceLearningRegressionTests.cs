@@ -162,6 +162,8 @@ public sealed class PreferenceLearningRegressionTests
             }
             if (targetMethod.Name == nameof(IFeedRepository.GetAvoidedTopicRulesAsync))
                 return Task.FromResult<IReadOnlyList<AvoidedTopicRule>>([]);
+            if (targetMethod.Name == nameof(IFeedRepository.GetPreferredTopicRulesAsync))
+                return Task.FromResult<IReadOnlyList<PreferredTopicRule>>([]);
             throw new NotSupportedException(targetMethod.Name);
         }
     }

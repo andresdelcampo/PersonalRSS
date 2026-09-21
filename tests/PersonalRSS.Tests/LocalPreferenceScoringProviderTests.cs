@@ -9,7 +9,7 @@ namespace PersonalRSS.Tests;
 public sealed class LocalPreferenceScoringProviderTests
 {
     [Fact]
-    public async Task Explicit_avoided_topic_rule_overrides_automatic_model_and_uses_phrase_boundaries()
+    public async Task Explicit_topic_rules_override_the_model_use_boundaries_and_prefer_the_more_specific_match()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"personalrss-explicit-topic-test-{Guid.NewGuid():N}.db");
         try
@@ -18,6 +18,8 @@ public sealed class LocalPreferenceScoringProviderTests
             var repository = new SqliteFeedRepository(new TestContextFactory(dbOptions));
             await repository.InitializeAsync();
             await repository.AddAvoidedTopicRuleAsync("AI");
+            await repository.AddAvoidedTopicRuleAsync("hardware");
+            await repository.AddPreferredTopicRuleAsync("Amiga hardware");
             var options = Options.Create(new ScoringOptions { BaseScore = 0.5 });
             var heuristic = new LocalPreferenceScoringProvider(new KeywordScoringProvider(options), repository, options);
             var provider = new PrecisionEnsembleScoringProvider(heuristic, repository, options);
@@ -26,11 +28,17 @@ public sealed class LocalPreferenceScoringProviderTests
                 "matched", "A practical AI assistant", "https://example.test/ai", null, null, DateTimeOffset.UtcNow));
             var boundaryMiss = await provider.ScoreAsync(new ArticleCandidate(
                 "miss", "Rail travel guide", "https://example.test/rail", null, null, DateTimeOffset.UtcNow));
+            var preferred = await provider.ScoreAsync(new ArticleCandidate(
+                "preferred", "New Amiga hardware accelerator", "https://example.test/amiga", null, null, DateTimeOffset.UtcNow));
 
             Assert.Equal(0, matched.Value);
             Assert.Equal(1, matched.Confidence);
             Assert.Equal(RelevanceBand.Filtered, RelevanceBands.Classify(matched.Value, matched.Confidence));
             Assert.Contains("explicit avoided topic \u201cAI\u201d", matched.Reason);
+            Assert.Equal(1, preferred.Value);
+            Assert.Equal(1, preferred.Confidence);
+            Assert.Equal(RelevanceBand.High, RelevanceBands.Classify(preferred.Value, preferred.Confidence));
+            Assert.Contains("explicit always-included topic \u201cAmiga hardware\u201d", preferred.Reason);
             Assert.Equal(0.5, boundaryMiss.Value);
             Assert.Equal(RelevanceBand.Maybe, RelevanceBands.Classify(boundaryMiss.Value, boundaryMiss.Confidence));
         }

@@ -8,7 +8,7 @@ namespace PersonalRSS.Tests;
 public sealed class SqliteFeedRepositoryTests
 {
     [Fact]
-    public async Task Avoided_topic_rules_are_normalized_editable_and_removable()
+    public async Task Explicit_topic_rules_are_normalized_editable_mutually_exclusive_and_removable()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"personalrss-topic-rules-test-{Guid.NewGuid():N}.db");
         try
@@ -26,9 +26,20 @@ public sealed class SqliteFeedRepositoryTests
             Assert.Equal("VR headsets", updated.Phrase);
             Assert.Equal("vr headsets", updated.NormalizedPhrase);
             Assert.Single(await repository.GetAvoidedTopicRulesAsync());
+            var preferred = await repository.AddPreferredTopicRuleAsync("  Amiga   preservation ");
+            var preferredDuplicate = await repository.AddPreferredTopicRuleAsync("amiga preservation");
+            var preferredUpdated = await repository.UpdatePreferredTopicRuleAsync(preferred.Id, "Classic Amiga");
+            Assert.Equal(preferred.Id, preferredDuplicate.Id);
+            Assert.Equal("classic amiga", preferredUpdated?.NormalizedPhrase);
+            Assert.Single(await repository.GetPreferredTopicRulesAsync());
+            await Assert.ThrowsAsync<InvalidOperationException>(() => repository.AddAvoidedTopicRuleAsync("Classic Amiga"));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => repository.AddPreferredTopicRuleAsync("VR headsets"));
             Assert.True(await repository.DeleteAvoidedTopicRuleAsync(first.Id));
             Assert.False(await repository.DeleteAvoidedTopicRuleAsync(first.Id));
             Assert.Empty(await repository.GetAvoidedTopicRulesAsync());
+            Assert.True(await repository.DeletePreferredTopicRuleAsync(preferred.Id));
+            Assert.False(await repository.DeletePreferredTopicRuleAsync(preferred.Id));
+            Assert.Empty(await repository.GetPreferredTopicRulesAsync());
         }
         finally
         {

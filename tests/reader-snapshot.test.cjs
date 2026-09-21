@@ -9,6 +9,7 @@ const loadFunction = source.slice(source.indexOf('async function load(resetOrder
 const selectFunctions = source.slice(source.indexOf('function selectAllFeeds('), source.indexOf('function showWelcome('));
 const refreshFunction = source.slice(source.indexOf('async function loadAndRefresh('), source.indexOf('renameForm.onsubmit'));
 const bandFunction = source.slice(source.indexOf('async function setBand('), source.indexOf('function setDisplayOptions'));
+const topicBusyFunctions = source.slice(source.indexOf('function syncTopicControls('), source.indexOf('async function refreshAfterTopicRescore('));
 
 function reader(allFeeds) {
   const context = vm.createContext({
@@ -106,4 +107,39 @@ test('explicit feed refresh reloads an active All feeds page', async () => {
   vm.runInContext(refreshFunction, context);
   await context.loadAndRefresh(true, true);
   assert.equal(reloads, 1);
+});
+
+test('topic recalculation clearly disables and restores both topic editors', () => {
+  const preferredControls = [{}, {}, {}], avoidedControls = [{}, {}];
+  const detail = controls => ({
+    attributes: {}, querySelectorAll: () => controls,
+    setAttribute(name, value) { this.attributes[name] = value; }
+  });
+  const context = vm.createContext({
+    topicRescoreBusy: false,
+    preferredTopicDetails: detail(preferredControls), avoidedTopicDetails: detail(avoidedControls),
+    topicRescoreStatus: { hidden: true, classList: { toggle: () => {} } },
+    topicRescoreSpinner: { hidden: true }, topicRescoreText: {}, topicRescoreRetry: { hidden: true }
+  });
+  vm.runInContext(topicBusyFunctions, context);
+
+  context.setTopicRescoreState(true, 'Recalculating relevance…');
+  assert.ok([...preferredControls, ...avoidedControls].every(control => control.disabled));
+  assert.equal(context.preferredTopicDetails.attributes['aria-busy'], 'true');
+  assert.equal(context.avoidedTopicDetails.attributes['aria-busy'], 'true');
+  assert.equal(context.topicRescoreStatus.hidden, false);
+  assert.equal(context.topicRescoreSpinner.hidden, false);
+
+  context.setTopicRescoreState(false, 'Relevance is up to date.');
+  assert.ok([...preferredControls, ...avoidedControls].every(control => !control.disabled));
+  assert.equal(context.preferredTopicDetails.attributes['aria-busy'], 'false');
+  assert.equal(context.topicRescoreSpinner.hidden, true);
+});
+
+test('topic mutations queue background rescoring instead of awaiting the full rescore', () => {
+  const topicEndpoints = source.slice(
+    source.indexOf('api.MapPost("/preferences/avoided-topics"'),
+    source.indexOf('api.MapPost("/articles/{id:guid}/feedback"'));
+  assert.match(topicEndpoints, /rescoring\.Request\(\)/);
+  assert.doesNotMatch(topicEndpoints, /RescoreAsync/);
 });
