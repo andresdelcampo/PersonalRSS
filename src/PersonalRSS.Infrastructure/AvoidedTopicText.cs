@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text;
 using System.Text.RegularExpressions;
 using PersonalRSS.Core;
 
@@ -17,8 +18,14 @@ public static partial class AvoidedTopicText
         return display;
     }
 
-    public static string Normalize(string value) => Whitespace().Replace(NonTopicCharacters().Replace(
-        WebUtility.HtmlDecode(value).ToLowerInvariant(), " "), " ").Trim();
+    public static string Normalize(string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        var folded = CombiningMarks().Replace(
+            WebUtility.HtmlDecode(value).ToLowerInvariant().Normalize(NormalizationForm.FormD),
+            string.Empty);
+        return Whitespace().Replace(NonTopicCharacters().Replace(folded, " "), " ").Trim();
+    }
 
     public static bool Matches(ArticleCandidate article, AvoidedTopicRule rule)
         => Matches(article, rule.NormalizedPhrase);
@@ -35,6 +42,9 @@ public static partial class AvoidedTopicText
 
     [GeneratedRegex(@"[^\p{L}\p{N}+#]+", RegexOptions.CultureInvariant)]
     private static partial Regex NonTopicCharacters();
+
+    [GeneratedRegex(@"\p{Mn}+", RegexOptions.CultureInvariant)]
+    private static partial Regex CombiningMarks();
 
     [GeneratedRegex(@"\s+", RegexOptions.CultureInvariant)]
     private static partial Regex Whitespace();

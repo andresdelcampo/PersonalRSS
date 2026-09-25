@@ -9,6 +9,21 @@ namespace PersonalRSS.Tests;
 public sealed class LocalPreferenceScoringProviderTests
 {
     [Fact]
+    public void Topic_normalization_matches_diacritic_variants()
+    {
+        var rule = new AvoidedTopicRule
+        {
+            Phrase = "Pokemon",
+            NormalizedPhrase = AvoidedTopicText.Normalize("Pokemon")
+        };
+        var article = new ArticleCandidate(
+            "pokemon-diacritic", "Pokémon TCG anniversary set", "https://example.test/pokemon", null, null, DateTimeOffset.UtcNow);
+
+        Assert.Equal("pokemon", AvoidedTopicText.Normalize("Pokémon"));
+        Assert.True(AvoidedTopicText.Matches(article, rule));
+    }
+
+    [Fact]
     public async Task Explicit_topic_rules_override_the_model_use_boundaries_and_prefer_the_more_specific_match()
     {
         var databasePath = Path.Combine(Path.GetTempPath(), $"personalrss-explicit-topic-test-{Guid.NewGuid():N}.db");
